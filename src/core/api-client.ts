@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { CommandContext } from '../types/index.js';
 import { redactSecrets } from '../utils/redact.js';
+import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from './credentials.js';
 
 export type ApiErrorCode =
   | 'USAGE_ERROR'
@@ -43,7 +44,7 @@ export function getCoreApiConfig(context: CommandContext): CoreApiConfig {
     baseUrl: String(cfg?.get ? cfg.get('apiUrl') : process.env.KABLEWY_API_URL || '').replace(/\/+$/, ''),
     orgId: String(cfg?.get ? cfg.get('orgId') : process.env.KABLEWY_ORG_ID || ''),
     userId: String(cfg?.get ? cfg.get('userId') : process.env.KABLEWY_USER_ID || ''),
-    apiKey: String(cfg?.get ? cfg.get('apiKey') : process.env.KABLEWY_API_KEY || ''),
+    apiKey: normalizeApiKey(cfg?.get ? cfg.get('apiKey') : process.env.KABLEWY_API_KEY || ''),
   };
 }
 
@@ -56,6 +57,9 @@ export function requireCoreApiConfig(context: CommandContext): CoreApiConfig {
   if (!config.apiKey) missing.push('apiKey');
   if (missing.length > 0) {
     throw new CliError(`Missing configuration: ${missing.join(', ')}`, 'USAGE_ERROR', 2);
+  }
+  if (!isScopedApiKey(config.apiKey)) {
+    throw new CliError(scopedApiKeyErrorMessage('Configured API key'), 'AUTH_ERROR', 65);
   }
   return config;
 }

@@ -56,13 +56,19 @@ describe('applyGlobalOptions', () => {
       apiUrl: 'https://example.com',
       orgId: 'org-1',
       userId: 'user-1',
-      apiKey: 'key-1'
+      apiKey: 'api_key_1'
     }, makeConfig());
 
     expect(setRuntime).toHaveBeenCalledWith('apiUrl', 'https://example.com');
     expect(setRuntime).toHaveBeenCalledWith('orgId', 'org-1');
     expect(setRuntime).toHaveBeenCalledWith('userId', 'user-1');
-    expect(setRuntime).toHaveBeenCalledWith('apiKey', 'key-1');
+    expect(setRuntime).toHaveBeenCalledWith('apiKey', 'api_key_1');
+  });
+
+  it('rejects non-scoped API key overrides', () => {
+    expect(() => applyGlobalOptions({ apiKey: 'eyJhbGciOi.fake.jwt' }, makeConfig())).toThrow(/starting with "api_"/);
+
+    expect(setRuntime).not.toHaveBeenCalled();
   });
 
   it('does not touch runtime config when no override flags are provided', () => {

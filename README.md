@@ -54,6 +54,8 @@ kablewy auth keys revoke <keyId>
 
 If your organization requires MFA, sign in through the Kablewy desktop or web app first, then rerun `kablewy login` so the CLI can reuse that authenticated session. Full in-CLI MFA entry is deferred in `0.1.0`.
 
+Normal CLI commands use only scoped Kablewy API keys that start with `api_`. Browser, desktop, magic-link, and refresh tokens are used only during `kablewy login` and are rejected if passed through `--api-key`, `KABLEWY_API_KEY`, or `config --set apiKey=...`.
+
 ## Kablewy service
 
 The public CLI connects to the Kablewy production service at `https://kablewy.ai`. Customers do not need to choose an environment. Run `kablewy login`, then use the commands normally.
@@ -75,10 +77,14 @@ Environment variables for CI or one-off shells: `KABLEWY_API_URL`, `KABLEWY_ORG_
 Global flags override config for a single invocation and are positional — place them before the subcommand:
 
 ```bash
-kablewy --api-url https://kablewy.ai --org-id <org-id> --user-id <user-id> --api-key <api-key> status --json
+kablewy --api-url https://kablewy.ai --org-id <org-id> --user-id <user-id> --api-key <api_-scoped-key> status --json
 ```
 
 Human output and verbose diagnostics redact bearer tokens, refresh tokens, API keys, cookies, authorization headers, and related secret fields.
+
+## Security boundary
+
+The CLI is a Node.js program that runs on your machine with your user's filesystem and network permissions. It is not a sandbox and does not run inside Wasm. Treat file uploads, local config, shell history, external MCP headers, and any local MCP process you configure as part of your own trusted environment. Hosted skill and MCP execution runs on Kablewy's platform; the CLI only packages, configures, and invokes those platform surfaces.
 
 ## Status
 
@@ -313,7 +319,7 @@ kablewy quick-actions run renewal-review \
   --wait --json
 
 # Non-persistent overrides for CI
-KABLEWY_API_KEY=<api-key> \
+KABLEWY_API_KEY=<api_-scoped-key> \
 KABLEWY_ORG_ID=<org-id> \
 KABLEWY_USER_ID=<user-id> \
 KABLEWY_CONFIG_DIR=/tmp/kablewy-cli-config \
@@ -328,11 +334,11 @@ The first beta intentionally does not expose plugin management, graph exploratio
 
 ## Troubleshooting
 
-**Authentication errors (exit `65`).** Your stored key is missing, expired, or revoked. Re-run `kablewy login`, then verify with `kablewy whoami --json`. If login reports MFA is required, sign in through the Kablewy app first and rerun `kablewy login` to reuse that session.
+**Authentication errors (exit `65`).** Your stored key is missing, expired, revoked, or not a scoped `api_` key. Re-run `kablewy login`, then verify with `kablewy whoami --json`. If login reports MFA is required, sign in through the Kablewy app first and rerun `kablewy login` to reuse that session.
 
 **429 / rate limiting on bulk uploads.** `docs upload` retries rate-limited files automatically (default 3 attempts, configurable with `--retry` / `--retry-delay`), honors the server's `Retry-After` header (capped at 60 s), and adaptively backs off concurrency on repeated errors. For large batches, lower `--concurrency` and resume any remaining failures with `--resume-from <sessionId>`.
 
-**CI isolation.** Set `KABLEWY_CONFIG_DIR` to a throwaway directory so CI jobs never read or write your real CLI config, and pass credentials via `KABLEWY_API_KEY` / `KABLEWY_ORG_ID` / `KABLEWY_USER_ID` environment variables.
+**CI isolation.** Set `KABLEWY_CONFIG_DIR` to a throwaway directory so CI jobs never read or write your real CLI config, and pass a scoped `api_` key via `KABLEWY_API_KEY` with `KABLEWY_ORG_ID` / `KABLEWY_USER_ID` environment variables.
 
 **General checks.**
 

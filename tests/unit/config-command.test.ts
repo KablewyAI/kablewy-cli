@@ -7,6 +7,7 @@ describe('Config Command --set', () => {
   let setMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    process.exitCode = undefined;
     setMock = vi.fn();
     context = {
       config: {
@@ -46,10 +47,18 @@ describe('Config Command --set', () => {
     expect(setMock).toHaveBeenCalledWith('apiUrl', 'https://kablewy.ai/path?a=b&c=d');
   });
 
-  it('keeps base64-style padding in secret values', async () => {
-    await runSet('apiKey=abc123==');
+  it('keeps padding in scoped API key values', async () => {
+    await runSet('apiKey=api_abc123==');
 
-    expect(setMock).toHaveBeenCalledWith('apiKey', 'abc123==');
+    expect(setMock).toHaveBeenCalledWith('apiKey', 'api_abc123==');
+  });
+
+  it('rejects session-shaped values for apiKey', async () => {
+    await runSet('apiKey=eyJhbGciOi.fake.jwt');
+
+    expect(setMock).not.toHaveBeenCalled();
+    expect(context.output.error).toHaveBeenCalledWith(expect.stringContaining('starting with "api_"'));
+    expect(process.exitCode).toBe(2);
   });
 
   it('sets a simple key=value pair', async () => {

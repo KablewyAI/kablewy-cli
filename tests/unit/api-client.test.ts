@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CliError, errorEnvelope, exitCodeFor, successEnvelope, writeJsonSuccess } from '../../src/core/api-client.js';
+import { CliError, errorEnvelope, exitCodeFor, requireCoreApiConfig, successEnvelope, writeJsonSuccess } from '../../src/core/api-client.js';
 import { maskSecret, redactSecrets } from '../../src/utils/redact.js';
 import { CommandContext } from '../../src/types/index.js';
 
@@ -54,6 +54,33 @@ describe('API client output helpers', () => {
         }
       }
     });
+  });
+});
+
+describe('API client configuration', () => {
+  function contextWithApiKey(apiKey: string): CommandContext {
+    return {
+      output: { json: vi.fn() },
+      config: {
+        get: (key: string) => ({
+          apiUrl: 'https://kablewy.ai',
+          orgId: 'org-1',
+          userId: 'user-1',
+          apiKey
+        } as Record<string, string>)[key]
+      },
+      mcpClient: {},
+      input: {}
+    } as unknown as CommandContext;
+  }
+
+  it('accepts scoped api_ keys', () => {
+    expect(requireCoreApiConfig(contextWithApiKey('api_test_key')).apiKey).toBe('api_test_key');
+  });
+
+  it('rejects session-shaped tokens before REST commands can use them', () => {
+    expect(() => requireCoreApiConfig(contextWithApiKey('eyJhbGciOi.fake.jwt'))).toThrow(CliError);
+    expect(() => requireCoreApiConfig(contextWithApiKey('eyJhbGciOi.fake.jwt'))).toThrow(/starting with "api_"/);
   });
 });
 

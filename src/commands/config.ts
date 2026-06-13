@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { CommandContext, ConfigOptions, OutputHandler, KablewyConfig, MCPServerConfig } from '../types/index.js';
 import { redactSecrets, isSecretKey, maskSecret } from '../utils/redact.js';
+import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
 
 export function createConfigCommand(context: CommandContext): Command {
   const command = new Command('config');
@@ -131,6 +132,13 @@ async function setConfigurationValue(keyValue: string, config: unknown, output: 
     }
   } else if (key === 'interactive') {
     convertedValue = value.toLowerCase() === 'true';
+  } else if (key === 'apiKey') {
+    convertedValue = normalizeApiKey(value);
+    if (!isScopedApiKey(convertedValue)) {
+      output.error(scopedApiKeyErrorMessage('API key'));
+      process.exitCode = 2;
+      return;
+    }
   }
   
   (config as any).set(key as keyof KablewyConfig, convertedValue);

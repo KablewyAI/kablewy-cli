@@ -52,6 +52,10 @@ async function main() {
     // Handle global options
     program.hook('preAction', (thisCommand) => {
       applyGlobalOptions(thisCommand.opts(), config);
+      // Global flags are one-shot runtime overrides, so rebuild the MCP client
+      // after applying them. Otherwise `kablewy --api-key ... tools list` would
+      // still use the client initialized from the persisted config.
+      context.mcpClient = new KablewyMCPClient(config.getResolvedMCPServers());
     });
     
     // Handle errors

@@ -12,6 +12,8 @@ kablewy status --json
 
 If login reports MFA is required, sign in through the Kablewy app first and rerun `kablewy login`.
 
+If the error says the API key must start with `api_`, a browser session, desktop session, magic-link token, or refresh token was supplied where a scoped CLI key belongs. Run `kablewy login` and use the stored key, or pass a scoped `api_` key through CI secrets.
+
 ## Upload Rate Limits
 
 `docs upload` retries rate-limited files automatically, honors `Retry-After`, and backs off concurrency on repeated errors.

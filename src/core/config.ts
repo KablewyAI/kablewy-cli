@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { KablewyConfig, MCPServerConfig } from '../types/index.js';
+import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from './credentials.js';
 
 const defaultConfig: KablewyConfig = {
   // Public production API. `kablewy login` overwrites org/user/key; internal
@@ -147,11 +148,21 @@ export class ConfigManager {
   }
 
   set<K extends keyof KablewyConfig>(key: K, value: KablewyConfig[K]): void {
+    if (key === 'apiKey') {
+      const normalized = normalizeApiKey(value);
+      if (normalized && !isScopedApiKey(normalized)) {
+        throw new Error(scopedApiKeyErrorMessage('API key'));
+      }
+      value = normalized as KablewyConfig[K];
+    }
     this.config[key] = value;
     this.conf.set(key, value);
   }
 
   setRuntime<K extends keyof KablewyConfig>(key: K, value: KablewyConfig[K]): void {
+    if (key === 'apiKey') {
+      value = normalizeApiKey(value) as KablewyConfig[K];
+    }
     this.config[key] = value;
   }
 
@@ -160,6 +171,13 @@ export class ConfigManager {
   }
 
   update(updates: Partial<KablewyConfig>): void {
+    if (typeof updates.apiKey === 'string') {
+      const normalized = normalizeApiKey(updates.apiKey);
+      if (normalized && !isScopedApiKey(normalized)) {
+        throw new Error(scopedApiKeyErrorMessage('API key'));
+      }
+      updates = { ...updates, apiKey: normalized };
+    }
     Object.assign(this.config, updates);
     this.conf.store = this.config;
   }
@@ -307,6 +325,8 @@ export class ConfigManager {
     }
     if (!this.config.apiKey) {
       errors.push('API Key is required');
+    } else if (!isScopedApiKey(this.config.apiKey)) {
+      errors.push(scopedApiKeyErrorMessage('API Key'));
     }
     if (this.config.concurrency < 1 || this.config.concurrency > 20) {
       errors.push('Concurrency must be between 1 and 20');

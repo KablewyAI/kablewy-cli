@@ -6,6 +6,7 @@ import { basename } from 'path';
 import FormData from 'form-data';
 import { request } from 'undici';
 import { writeJsonSuccess } from '../core/api-client.js';
+import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
 
 export function createSkillCommand(context: CommandContext, commandName = 'skill'): Command {
   const command = new Command(commandName);
@@ -119,7 +120,7 @@ function getSkillApiConfig(context: CommandContext): { baseUrl: string; orgId: s
     baseUrl: (cfg?.get ? cfg.get('apiUrl') : process.env.KABLEWY_API_URL || '').replace(/\/+$/, ''),
     orgId: cfg?.get ? cfg.get('orgId') : process.env.KABLEWY_ORG_ID || '',
     userId: cfg?.get ? cfg.get('userId') : process.env.KABLEWY_USER_ID || '',
-    apiKey: cfg?.get ? cfg.get('apiKey') : process.env.KABLEWY_API_KEY || '',
+    apiKey: normalizeApiKey(cfg?.get ? cfg.get('apiKey') : process.env.KABLEWY_API_KEY || ''),
   };
 }
 
@@ -141,6 +142,11 @@ function validateConfig(config: ReturnType<typeof getSkillApiConfig>, output: Co
       'kablewy config --set apiKey <your-api-key>'
     ]);
     process.exitCode = 2; // usage error
+    return false;
+  }
+  if (!isScopedApiKey(config.apiKey)) {
+    output.error(scopedApiKeyErrorMessage('Configured API key'));
+    process.exitCode = 65; // auth error
     return false;
   }
   return true;

@@ -29,6 +29,10 @@ kablewy chat --message "Return the top three risks" --json
 
 The `0.1.x` public beta targets client-ready deterministic workflows, not full web-app parity. It intentionally excludes admin command groups, queue/log inspection, graph exploration, workcells, plugin management, and full workflow-job authoring.
 
+## Security Boundary
+
+The CLI is a Node.js command that runs with the local user's filesystem and network permissions. It is not a sandbox or Wasm runtime. Steady-state CLI credentials are scoped `api_` keys; session tokens are only used during `kablewy login` to mint that key.
+
 ## Core Commands
 
 ```text

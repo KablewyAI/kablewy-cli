@@ -152,15 +152,18 @@ describe.skipIf(!cliBuilt)('CLI End-to-End Workflow Tests', () => {
   });
 
   describe('Tools Workflow', () => {
-    it('should report no tools when unauthenticated', async () => {
+    it('should fail before tool discovery when unauthenticated', async () => {
       const { code, stdout } = await runCli(['tools', 'list'], { KABLEWY_API_URL: UNREACHABLE_API });
 
-      expect(code).toBe(0);
-      expect(stdout).toContain('No MCP tools available');
+      expect(code).toBe(2);
+      expect(stdout).toContain('Missing configuration: apiKey');
     });
 
     it('should fail tools test against an unreachable backend', async () => {
-      const { code, stdout } = await runCli(['tools', 'test'], { KABLEWY_API_URL: UNREACHABLE_API });
+      const { code, stdout } = await runCli(['tools', 'test'], {
+        KABLEWY_API_URL: UNREACHABLE_API,
+        KABLEWY_API_KEY: 'api_test_key'
+      });
 
       expect(code).toBe(70);
       expect(stdout).toContain('Testing MCP Tool Connectivity');

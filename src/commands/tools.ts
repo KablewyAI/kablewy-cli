@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { CommandContext, ToolsOptions, OutputHandler, MCPTool, MCPToolProperty, InputHandler } from '../types/index.js';
 import { CliError, exitCodeFor, writeJsonError, writeJsonSuccess } from '../core/api-client.js';
+import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
 
 export function createToolsCommand(context: CommandContext): Command {
   const command = new Command('tools');
@@ -64,6 +65,17 @@ function resolveToolsOptions(options: ToolsOptions, command?: Command): ToolsOpt
   return { ...parentOptions, ...commandOptions, ...options };
 }
 
+function requireToolsCredential(context: CommandContext): void {
+  const cfg: any = context.config;
+  const apiKey = normalizeApiKey(cfg?.get ? cfg.get('apiKey') : process.env.KABLEWY_API_KEY);
+  if (!apiKey) {
+    throw new CliError('Missing configuration: apiKey', 'USAGE_ERROR', 2);
+  }
+  if (!isScopedApiKey(apiKey)) {
+    throw new CliError(scopedApiKeyErrorMessage('Configured API key'), 'AUTH_ERROR', 65);
+  }
+}
+
 async function handleTools(options: ToolsOptions, context: CommandContext): Promise<void> {
   const { output } = context;
   
@@ -81,6 +93,7 @@ async function handleToolsList(options: ToolsOptions, context: CommandContext): 
   const { output, mcpClient } = context;
   
   try {
+    requireToolsCredential(context);
     const tools = await mcpClient.listTools();
 
     // Apply filters
@@ -146,6 +159,7 @@ async function handleToolsDescribe(toolName: string, options: ToolsOptions, cont
   const { output, mcpClient } = context;
   
   try {
+    requireToolsCredential(context);
     const tools = await mcpClient.listTools();
     const tool = tools.find((t: MCPTool) => t.name === toolName);
     
@@ -200,6 +214,7 @@ async function handleToolsCall(toolName: string, options: ToolsOptions, context:
   const { output, mcpClient, input } = context;
   
   try {
+    requireToolsCredential(context);
     const tools = await mcpClient.listTools();
     const tool = tools.find((t: MCPTool) => t.name === toolName);
     
@@ -257,6 +272,7 @@ async function handleToolsTest(options: ToolsOptions, context: CommandContext): 
   const { output, config } = context;
 
   try {
+    requireToolsCredential(context);
     if (!options.json) {
       output.section('Testing MCP Tool Connectivity');
     }

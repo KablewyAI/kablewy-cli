@@ -1,5 +1,6 @@
 import chalk from 'chalk';
 import { Command } from 'commander';
+import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from './credentials.js';
 
 export interface GlobalCliOptions {
   verbose?: boolean;
@@ -45,6 +46,12 @@ export function applyGlobalOptions(opts: GlobalCliOptions, config: RuntimeConfig
     config.setRuntime('userId', opts.userId);
   }
   if (opts.apiKey) {
-    config.setRuntime('apiKey', opts.apiKey);
+    const apiKey = normalizeApiKey(opts.apiKey);
+    if (!isScopedApiKey(apiKey)) {
+      const error = new Error(scopedApiKeyErrorMessage('--api-key'));
+      (error as any).exitCode = 2;
+      throw error;
+    }
+    config.setRuntime('apiKey', apiKey);
   }
 }

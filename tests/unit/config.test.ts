@@ -67,11 +67,11 @@ describe('ConfigManager', () => {
     });
 
     it('should set runtime-only values without persisting them', () => {
-      config.setRuntime('apiKey', 'runtime-only-key');
-      expect(config.get('apiKey')).toBe('runtime-only-key');
+      config.setRuntime('apiKey', 'api_runtime_only_key');
+      expect(config.get('apiKey')).toBe('api_runtime_only_key');
 
       const fresh = new ConfigManager();
-      expect(fresh.get('apiKey')).not.toBe('runtime-only-key');
+      expect(fresh.get('apiKey')).not.toBe('api_runtime_only_key');
       fresh.reset();
     });
 
@@ -202,7 +202,7 @@ describe('ConfigManager', () => {
       // so a valid config must carry the values login normally persists.
       config.set('orgId', 'org-test');
       config.set('userId', 'user-test');
-      config.set('apiKey', 'test-api-key');
+      config.set('apiKey', 'api_test_key');
 
       const validation = config.validate();
       expect(validation.valid).toBe(true);
@@ -236,6 +236,20 @@ describe('ConfigManager', () => {
       const validation = config.validate();
       expect(validation.valid).toBe(false);
       expect(validation.errors).toContain('API Key is required');
+    });
+
+    it('should reject non-scoped apiKey values at set() time', () => {
+      expect(() => config.set('apiKey', 'eyJhbGciOi.fake.jwt')).toThrow(/starting with "api_"/);
+    });
+
+    it('should report non-scoped runtime apiKey values via validate()', () => {
+      config.set('orgId', 'org-test');
+      config.set('userId', 'user-test');
+      config.setRuntime('apiKey', 'eyJhbGciOi.fake.jwt');
+
+      const validation = config.validate();
+      expect(validation.valid).toBe(false);
+      expect(validation.errors).toContain('API Key must be a scoped Kablewy API key starting with "api_". Run `kablewy login` to mint one; browser or desktop session tokens are only used during login.');
     });
 
     // Numeric ranges are now enforced fail-fast by the conf schema at set()

@@ -26,6 +26,8 @@ kablewy status
 
 If your organization requires MFA, sign in through the Kablewy web or desktop app first, then rerun `kablewy login` so the CLI can reuse the authenticated session. Full in-CLI MFA entry is not part of `0.1.x`.
 
+After login, normal commands use only scoped Kablewy API keys that start with `api_`. Session, magic-link, and refresh tokens are not accepted as configured CLI credentials.
+
 ## First Document Workflow
 
 ```bash

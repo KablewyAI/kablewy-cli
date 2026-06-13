@@ -5,6 +5,7 @@ import React from 'react';
 import { InkChat, runInkChat } from '../ui/ink-chat.js';
 import os from 'os';
 import { CliError, exitCodeFor, writeJsonError, writeJsonSuccess } from '../core/api-client.js';
+import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
 
 export function createChatCommand(context: CommandContext): Command {
   const command = new Command('chat');
@@ -372,11 +373,15 @@ function extractProcessChatText(result: any): string {
 
 function getCoreConfig(context: CommandContext): { apiUrl: string; orgId: string; userId: string; apiKey: string } {
   const cfg: any = context.config;
+  const apiKey = normalizeApiKey(cfg?.get ? cfg.get('apiKey') : process.env.KABLEWY_API_KEY);
+  if (apiKey && !isScopedApiKey(apiKey)) {
+    throw new CliError(scopedApiKeyErrorMessage('Configured API key'), 'AUTH_ERROR', 65);
+  }
   return {
     apiUrl: cfg?.get ? cfg.get('apiUrl') : process.env.KABLEWY_API_URL,
     orgId: cfg?.get ? cfg.get('orgId') : process.env.KABLEWY_ORG_ID,
     userId: cfg?.get ? cfg.get('userId') : process.env.KABLEWY_USER_ID,
-    apiKey: cfg?.get ? cfg.get('apiKey') : process.env.KABLEWY_API_KEY,
+    apiKey,
   } as any;
 }
 

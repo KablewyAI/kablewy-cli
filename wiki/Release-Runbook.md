@@ -9,22 +9,17 @@ npm run build
 npm run test:ci
 npm audit --omit=dev --json
 npm pack --dry-run --json
+npm run smoke:tarball
 npm run preflight:npm
 ```
 
 ## Tarball Smoke
 
 ```bash
-npm pack
-mkdir -p /tmp/kablewy-cli-smoke
-cd /tmp/kablewy-cli-smoke
-npm init -y
-npm install /path/to/kablewy-cli-0.1.0.tgz
-./node_modules/.bin/kablewy --help
-./node_modules/.bin/kablewy --version
-./node_modules/.bin/kablewy docs --help
-./node_modules/.bin/kablewy mcp --help
+npm run smoke:tarball
 ```
+
+The smoke script builds, packs, installs the generated tarball into a clean temp project, verifies help for the public command surface, confirms there is no global internal environment selector, and confirms a session-shaped token is rejected before network.
 
 ## Authenticated Smoke
 

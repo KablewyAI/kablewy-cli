@@ -21,6 +21,7 @@ import {
 import { UploadLogger, classifyError } from '../utils/index.js';
 import { recordFileFailure, recordFileSkipped, recordFileStart, recordFileSuccess } from '../utils/index.js';
 import { pipeline } from 'stream/promises';
+import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
 
 const DEFAULT_ALLOWED_EXTENSIONS = new Set([
   '.pdf',
@@ -103,7 +104,7 @@ async function handleUpload(patterns: string[], options: UploadOptions, context:
       const useContainer = Boolean((options as any).useContainer);
       const cfgDocWorkerUrl = configMgr?.get ? (configMgr.get('docWorkerUrl') as string) : (process.env.KABLEWY_DOC_WORKER_URL as string);
       const cfgDocProcessorToken = configMgr?.get ? (configMgr.get('docProcessorToken') as string) : (process.env.KABLEWY_DOC_PROCESSOR_TOKEN as string);
-      const apiKey = configMgr?.get ? (configMgr.get('apiKey') as string) : (process.env.KABLEWY_API_KEY as string);
+      const apiKey = normalizeApiKey(configMgr?.get ? (configMgr.get('apiKey') as string) : (process.env.KABLEWY_API_KEY as string));
       const docWorkerUrl = (((options as any).docWorkerUrl as string) || cfgDocWorkerUrl || '').replace(/\/+$/, '');
       const explicitToken = (options as any).docProcessorToken as string || cfgDocProcessorToken;
       const tokenSource = useContainer ? (explicitToken ? 'doc-processor-token' : 'apiKey(fallback)') : 'apiKey';
@@ -403,7 +404,10 @@ async function uploadFile(
   const apiUrlRaw = configMgr?.get ? (configMgr.get('apiUrl') as string) : (process.env.KABLEWY_API_URL as string);
   const orgId = configMgr?.get ? (configMgr.get('orgId') as string) : (process.env.KABLEWY_ORG_ID as string);
   const userId = configMgr?.get ? (configMgr.get('userId') as string) : (process.env.KABLEWY_USER_ID as string);
-  const apiKey = configMgr?.get ? (configMgr.get('apiKey') as string) : (process.env.KABLEWY_API_KEY as string);
+  const apiKey = normalizeApiKey(configMgr?.get ? (configMgr.get('apiKey') as string) : (process.env.KABLEWY_API_KEY as string));
+  if (apiKey && !isScopedApiKey(apiKey)) {
+    throw new Error(scopedApiKeyErrorMessage('Configured API key'));
+  }
   const baseUrl = (apiUrlRaw || '').replace(/\/+$/, '');
 
   // Container routing (optional)

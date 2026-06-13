@@ -291,6 +291,10 @@ describe('Command Integration Tests', () => {
       };
       const toolsContext = {
         ...context,
+        config: {
+          ...context.config,
+          get: (key: string) => key === 'apiKey' ? 'api_test_key' : (context.config as any).get(key)
+        } as any,
         output: output as any,
         mcpClient: {
           listTools: vi.fn().mockResolvedValue([]),

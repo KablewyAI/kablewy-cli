@@ -23,10 +23,10 @@ kablewy config --set orgId=<org-id>
 
 ## CI Isolation
 
-Never let CI read a developer's local CLI profile. Use a throwaway `KABLEWY_CONFIG_DIR` and pass credentials through CI secrets.
+Never let CI read a developer's local CLI profile. Use a throwaway `KABLEWY_CONFIG_DIR` and pass credentials through CI secrets. `KABLEWY_API_KEY` must be a scoped Kablewy API key starting with `api_`, not a browser or desktop session token.
 
 ```bash
-KABLEWY_API_KEY=<api-key> \
+KABLEWY_API_KEY=<api_-scoped-key> \
 KABLEWY_ORG_ID=<org-id> \
 KABLEWY_USER_ID=<user-id> \
 KABLEWY_CONFIG_DIR=/tmp/kablewy-cli-config \
@@ -41,6 +41,8 @@ Global flags override config for one invocation. Place them before the subcomman
 kablewy \
   --org-id <org-id> \
   --user-id <user-id> \
-  --api-key <api-key> \
+  --api-key <api_-scoped-key> \
   status --json
 ```
+
+`--api-key`, `KABLEWY_API_KEY`, and `config --set apiKey=...` reject values that do not start with `api_`.

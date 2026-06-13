@@ -46,7 +46,7 @@ describe('Upload Command', () => {
             apiUrl: 'http://localhost:8787',
             orgId: 'test-org',
             userId: 'test-user',
-            apiKey: 'test-key'
+            apiKey: 'api_test_key'
           };
           return values[key];
         })

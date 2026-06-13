@@ -6,6 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import yaml from 'js-yaml';
 import { CommandContext } from '../types/index.js';
+import { isScopedApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
 
 /**
  * `kablewy login` — get a scoped API key without ever pasting one.
@@ -232,6 +233,9 @@ async function mintAndStore(args: MintArgs): Promise<void> {
   const mintBody = mint.body as { id?: string; keyId?: string; key?: string; prefix?: string; keyPrefix?: string; expiresAt?: string } | undefined;
   const apiKey = mintBody?.key;
   if (!apiKey) throw new Error('The server did not return an API key.');
+  if (!isScopedApiKey(apiKey)) {
+    throw new Error(`The server returned an invalid CLI key. ${scopedApiKeyErrorMessage('Returned key')}`);
+  }
 
   // Persist and lock down (conf defaults to 0o666 — chmod the credential file).
   config.set('apiUrl', base);

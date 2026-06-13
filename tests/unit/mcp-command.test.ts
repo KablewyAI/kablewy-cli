@@ -45,7 +45,7 @@ describe('mcp command', () => {
           apiUrl: 'https://api.example.com',
           orgId: 'org-1',
           userId: 'user-1',
-          apiKey: 'api-key-secret'
+          apiKey: 'api_key_secret'
         } as Record<string, string>)[key]
       },
       output: output as any,
@@ -76,7 +76,7 @@ describe('mcp command', () => {
       new URL('https://api.example.com/v1/mcp-servers/org-1/users/user-1'),
       expect.objectContaining({
         method: 'GET',
-        headers: expect.objectContaining({ Authorization: 'Bearer api-key-secret' })
+        headers: expect.objectContaining({ Authorization: 'Bearer api_key_secret' })
       })
     );
     expect(output.json).toHaveBeenCalledWith({

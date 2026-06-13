@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import { CommandContext, StatusOptions, MCPToolProperty } from '../types/index.js';
-import { exitCodeFor, writeJsonError, writeJsonSuccess } from '../core/api-client.js';
+import { CliError, exitCodeFor, writeJsonError, writeJsonSuccess } from '../core/api-client.js';
+import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
 
 type HealthState = 'healthy' | 'warning' | 'unhealthy';
 
@@ -148,7 +149,7 @@ async function runHealthChecks(context: CommandContext): Promise<{ results: Heal
   // 3 + 4. Credential validity + tool availability (direct authed probe).
   // We probe the JSON-RPC tools/list directly rather than via the MCP client, because the
   // client swallows HTTP errors and returns [] — which would mask a 401/403 as "0 tools".
-  const apiKey = String(configData.apiKey || '');
+  const apiKey = normalizeApiKey(configData.apiKey || '');
   const orgId = String(configData.orgId || '');
   const userId = String(configData.userId || '');
   const probe = await probeCredential(base, orgId, userId, apiKey);
@@ -182,6 +183,9 @@ interface CredentialProbe {
 async function probeCredential(base: string, orgId: string, userId: string, apiKey: string): Promise<CredentialProbe> {
   if (!apiKey) {
     return { state: 'unauthorized', toolCount: 0, detail: 'no API key configured — run `kablewy login`' };
+  }
+  if (!isScopedApiKey(apiKey)) {
+    return { state: 'unauthorized', toolCount: 0, detail: scopedApiKeyErrorMessage('configured API key') };
   }
   const url = `${base}/v1/mcp-jsonrpc/${orgId}/users/${userId}/mcp/jsonrpc`;
   let res: Response;
@@ -226,6 +230,14 @@ async function listTools(options: StatusOptions, context: CommandContext): Promi
   const { output, mcpClient } = context;
 
   try {
+    const cfg = (context.config as unknown as { get?: (key: string) => unknown });
+    const apiKey = normalizeApiKey(cfg?.get ? cfg.get('apiKey') : process.env.KABLEWY_API_KEY);
+    if (!apiKey) {
+      throw new CliError('Missing configuration: apiKey', 'USAGE_ERROR', 2);
+    }
+    if (!isScopedApiKey(apiKey)) {
+      throw new CliError(scopedApiKeyErrorMessage('Configured API key'), 'AUTH_ERROR', 65);
+    }
     const tools = await mcpClient.listTools();
 
     if (options.json) {
