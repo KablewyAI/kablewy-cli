@@ -1,0 +1,111 @@
+{
+  "name": "@kablewy/cli",
+  "version": "0.1.0",
+  "description": "Command-line interface for Kablewy — upload documents, search knowledge, chat with context, call tools, and script repeatable AI workflows",
+  "main": "dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "type": "module",
+  "bin": {
+    "kablewy": "./dist/cli.js"
+  },
+  "files": [
+    "dist/**/*",
+    "README.md",
+    "LICENSE",
+    "CHANGELOG.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KablewyAI/kablewy-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KablewyAI/kablewy-cli/issues"
+  },
+  "homepage": "https://github.com/KablewyAI/kablewy-cli#readme",
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "vitest",
+    "test:unit": "vitest tests/unit",
+    "test:integration": "vitest tests/integration",
+    "test:e2e": "vitest tests/e2e",
+    "test:coverage": "vitest --coverage",
+    "test:watch": "vitest --watch",
+    "test:ci": "vitest --run --coverage",
+    "lint": "eslint src/**/*.ts tests/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts tests/**/*.ts --fix",
+    "format": "prettier --write src/**/*.ts tests/**/*.ts",
+    "format:check": "prettier --check src/**/*.ts tests/**/*.ts",
+    "start": "node dist/cli.js",
+    "preflight:npm": "node scripts/preflight-npm-scope.mjs",
+    "prepublishOnly": "npm run build && npm run test:ci",
+    "demo": "npm run build && node dist/cli.js --help",
+    "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e"
+  },
+  "keywords": [
+    "kablewy",
+    "cli",
+    "knowledge-work",
+    "ai",
+    "mcp",
+    "document-management",
+    "search",
+    "chat"
+  ],
+  "author": "Kablewy Team",
+  "license": "MIT",
+  "dependencies": {
+    "boxen": "^7.0.1",
+    "chalk": "^5.3.0",
+    "commander": "^11.1.0",
+    "conf": "^11.0.2",
+    "dotenv": "^16.3.1",
+    "figlet": "^1.6.0",
+    "form-data": "^4.0.0",
+    "glob": "^10.5.0",
+    "gradient-string": "^2.0.2",
+    "ink": "4.4.1",
+    "ink-text-input": "5.0.1",
+    "inquirer": "^9.3.8",
+    "js-yaml": "^4.2.0",
+    "ora": "^7.0.1",
+    "react": "18.2.0",
+    "table": "^6.8.1",
+    "undici": "^6.24.0"
+  },
+  "overrides": {
+    "ajv": "^8.20.0",
+    "brace-expansion": "^2.1.1",
+    "fast-uri": "^3.1.2",
+    "lodash": "^4.18.1",
+    "picomatch": "^2.3.2",
+    "ws": "^8.21.0"
+  },
+  "devDependencies": {
+    "@types/figlet": "^1.5.8",
+    "@types/inquirer": "^9.0.7",
+    "@types/js-yaml": "^4.0.9",
+    "@types/node": "^20.10.6",
+    "@types/react": "^19.1.12",
+    "@typescript-eslint/eslint-plugin": "^6.21.0",
+    "@typescript-eslint/parser": "^6.21.0",
+    "@vitest/coverage-v8": "^1.1.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.1.1",
+    "typescript": "^5.3.3",
+    "vitest": "^1.1.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
