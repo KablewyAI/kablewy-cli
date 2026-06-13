@@ -10,7 +10,7 @@ describe('public package and README contract', () => {
   it('uses the public package identity', () => {
     expect(packageJson.name).toBe('@kablewy/cli');
     expect(packageJson.version).toBe('0.1.0');
-    expect(packageJson.bin).toEqual({ kablewy: './dist/cli.js' });
+    expect(packageJson.bin).toEqual({ kablewy: 'dist/cli.js' });
     expect(readme).toContain('npm install -g @kablewy/cli');
   });
 

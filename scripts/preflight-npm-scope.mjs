@@ -12,8 +12,8 @@ async function main() {
   if (pkg.name !== expectedName) {
     throw new Error(`package.json name must be ${expectedName}, got ${pkg.name}`);
   }
-  if (pkg.bin?.kablewy !== './dist/cli.js') {
-    throw new Error('package.json must expose bin.kablewy = ./dist/cli.js');
+  if (pkg.bin?.kablewy !== 'dist/cli.js') {
+    throw new Error('package.json must expose bin.kablewy = dist/cli.js');
   }
 
   const whoami = await run('npm', ['whoami']);

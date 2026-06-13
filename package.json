@@ -13,7 +13,7 @@
   },
   "type": "module",
   "bin": {
-    "kablewy": "./dist/cli.js"
+    "kablewy": "dist/cli.js"
   },
   "files": [
     "dist/**/*",
