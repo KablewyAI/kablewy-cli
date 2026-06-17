@@ -91,7 +91,7 @@ async function handleLogin(options: LoginOptions, context: CommandContext): Prom
   const { output } = context;
   const config = context.config as unknown as ConfigLike;
 
-  const base = String(options.apiUrl || config.get('apiUrl') || '').replace(/\/+$/, '');
+  const base = trimTrailingSlashes(String(options.apiUrl || config.get('apiUrl') || ''));
   if (!base) {
     throw new Error('No API URL configured. Pass --api-url or run `kablewy config --set apiUrl=<url>`.');
   }
