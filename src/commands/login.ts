@@ -488,7 +488,7 @@ export function buildOAuthAuthorizeUrl(
   base: string,
   args: { redirectUri: string; state: string; codeChallenge: string }
 ): string {
-  const url = new URL('/v1/oauth/authorize', `${base.replace(/\/+$/, '')}/`);
+  const url = new URL('/v1/oauth/authorize', `${trimTrailingSlashes(base)}/`);
   url.searchParams.set('response_type', 'code');
   url.searchParams.set('client_id', OAUTH_CLIENT_ID);
   url.searchParams.set('redirect_uri', args.redirectUri);
@@ -497,6 +497,12 @@ export function buildOAuthAuthorizeUrl(
   url.searchParams.set('state', args.state);
   url.searchParams.set('scope', OAUTH_SCOPE);
   return url.toString();
+}
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--;
+  return value.slice(0, end);
 }
 
 function base64Url(bytes: Uint8Array): string {

@@ -88,7 +88,7 @@ describe('login helpers', () => {
     });
 
     it('builds the first-party CLI authorize URL', () => {
-      const url = new URL(buildOAuthAuthorizeUrl('https://kablewy.ai', {
+      const url = new URL(buildOAuthAuthorizeUrl('https://kablewy.ai///', {
         redirectUri: 'http://127.0.0.1:49152/oauth/callback',
         state: 'state-123',
         codeChallenge: 'a'.repeat(43)
