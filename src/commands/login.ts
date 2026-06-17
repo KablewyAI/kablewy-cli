@@ -1,6 +1,7 @@
 import { Command } from 'commander';
 import http from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
 import { chmodSync, existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -11,19 +12,24 @@ import { isScopedApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js
 /**
  * `kablewy login` — get a scoped API key without ever pasting one.
  *
- * Primary path: REUSE the Kablewy desktop shell's sign-in. The shell is the
- * connect surface and the robust auth front door (it can also catch the
- * `kablewy://` deep link, which a CLI cannot). It writes a session to
- * `~/.kablewy/session.yaml`; we read it (refreshing if stale) and mint the
- * CLI's `api_` key from that session — no browser, no redirect-page fragility.
+ * Primary path: REUSE the Kablewy desktop shell's sign-in when present. The
+ * shell writes a session to `~/.kablewy/session.yaml`; we read it (refreshing
+ * if stale) and mint the CLI's `api_` key from that session.
  *
- * Fallback path (`--loopback`, or when no shell session exists): port the
- * shell's own loopback magic-link ceremony (auth.rs) directly in the CLI.
+ * Normal fallback: OAuth 2.0 Authorization Code + PKCE through the user's
+ * browser session. The browser handles Kablewy web login, SSO, and MFA; the CLI
+ * only receives a one-time authorization code through a loopback callback.
+ *
+ * Legacy fallback (`--loopback` or `--email`): email magic-link loopback.
  */
 
 const LOOPBACK_TIMEOUT_MS = 120_000;
+const OAUTH_TIMEOUT_MS = 120_000;
 const SESSION_FILE = join(homedir(), '.kablewy', 'session.yaml');
 const REFRESH_MARGIN_MS = 60_000;
+const OAUTH_CLIENT_ID = 'kablewy-cli';
+const OAUTH_SCOPE = 'cli';
+const OAUTH_CALLBACK_PATH = '/oauth/callback';
 
 // Least-privilege capability template for a CLI/CI key: the resource types the
 // deterministic lane touches, with the verbs the routes check. No admin and no wildcard.
@@ -46,6 +52,7 @@ interface LoginOptions {
   json?: boolean;
   loopback?: boolean;
   shell?: boolean;
+  browser?: boolean;
 }
 
 interface ConfigLike {
@@ -58,13 +65,14 @@ export function createLoginCommand(context: CommandContext): Command {
   const command = new Command('login');
 
   command
-    .description('Sign in (reuses the Kablewy desktop session) and store a scoped API key')
-    .option('--email <email>', 'Email for the browser fallback flow (prompts if omitted)')
+    .description('Sign in with browser authorization and store a scoped API key')
+    .option('--email <email>', 'Email for the legacy magic-link fallback (implies --loopback)')
     .option('--api-url <url>', 'Kablewy API base URL (overrides config)')
     .option('--ttl <duration>', 'Key lifetime, e.g. 15m, 12h, 30d', '30d')
     .option('--name <label>', 'Label for the minted key')
-    .option('--loopback', 'Force the browser magic-link flow (ignore any desktop-shell session)')
+    .option('--loopback', 'Use the legacy email magic-link loopback flow')
     .option('--shell', 'Require reusing the desktop-shell session (do not fall back to the browser flow)')
+    .option('--no-browser', 'Print the browser authorization URL instead of opening it automatically')
     .option('--json', 'Output the result as JSON')
     .action(async (options: LoginOptions) => {
       const { output } = context;
@@ -125,7 +133,12 @@ async function handleLogin(options: LoginOptions, context: CommandContext): Prom
     }
   }
 
-  await loopbackLogin({ base, ttlSeconds, options, context, config });
+  if (options.loopback || options.email) {
+    await loopbackLogin({ base, ttlSeconds, options, context, config });
+    return;
+  }
+
+  await oauthLogin({ base, ttlSeconds, options, context, config });
 }
 
 // ---- shell-session reuse -----------------------------------------------------
@@ -211,7 +224,7 @@ interface MintArgs {
   userId: string;
   sessionToken: string;
   email?: string;
-  source: 'desktop-shell' | 'magic-link';
+  source: 'desktop-shell' | 'browser-oauth' | 'magic-link';
   ttlSeconds: number;
   options: LoginOptions;
   context: CommandContext;
@@ -258,6 +271,77 @@ async function mintAndStore(args: MintArgs): Promise<void> {
     output.info(`Org: ${orgId}`);
     output.info(`Key stored at ${config.configPath} (chmod 600), expires ${expiresAt}`);
     output.info('Note: API keys are not instantly revocable server-side — the short expiry is the kill switch. Re-run `kablewy login` to rotate.');
+  }
+}
+
+// ---- browser OAuth fallback --------------------------------------------------
+
+async function oauthLogin(args: LoopbackArgs): Promise<void> {
+  const { base, ttlSeconds, options, context, config } = args;
+  const { output } = context;
+
+  const state = randomBytes(32).toString('hex');
+  const verifier = makeCodeVerifier();
+  const challenge = codeChallengeForVerifier(verifier);
+  const loopback = await startOAuthLoopback(state, OAUTH_TIMEOUT_MS);
+
+  try {
+    const redirectUri = `http://127.0.0.1:${loopback.port}${OAUTH_CALLBACK_PATH}`;
+    const authorizeUrl = buildOAuthAuthorizeUrl(base, { redirectUri, state, codeChallenge: challenge });
+
+    output.info('Opening Kablewy in your browser to authorize the CLI...');
+    const opened = options.browser === false ? false : await openBrowser(authorizeUrl);
+    if (!opened) {
+      output.info(`Open this URL to continue:\n${authorizeUrl}`);
+    }
+    output.info('If you are not signed in, complete Kablewy web login first. The browser will return to this terminal automatically.');
+    output.info('Waiting for browser authorization (2 min)...');
+
+    const callback = await loopback.wait();
+    if (callback.error) {
+      throw new Error(callback.error === 'access_denied' ? 'Browser authorization was cancelled.' : `Browser authorization failed: ${callback.error}`);
+    }
+    if (!callback.code) {
+      throw new Error('Browser authorization did not return an authorization code.');
+    }
+
+    const token = await postForm(`${base}/v1/oauth/token`, new URLSearchParams({
+      grant_type: 'authorization_code',
+      code: callback.code,
+      code_verifier: verifier,
+      client_id: OAUTH_CLIENT_ID,
+      redirect_uri: redirectUri
+    }));
+    if (!token.ok) throw new Error(describeHttp('complete browser authorization', token));
+
+    const body = token.body as {
+      sessionToken?: string;
+      access_token?: string;
+      userId?: string;
+      orgId?: string;
+      email?: string;
+    } | undefined;
+    const sessionToken = body?.sessionToken || body?.access_token || '';
+    const userId = body?.userId || '';
+    const orgId = body?.orgId || '';
+    if (!sessionToken || !userId || !orgId) {
+      throw new Error('Browser authorization did not return a complete Kablewy session.');
+    }
+
+    await mintAndStore({
+      base,
+      orgId,
+      userId,
+      sessionToken,
+      email: body?.email,
+      source: 'browser-oauth',
+      ttlSeconds,
+      options,
+      context,
+      config
+    });
+  } finally {
+    loopback.close();
   }
 }
 
@@ -362,7 +446,7 @@ export function defaultKeyName(now: Date): string {
 }
 
 export function mfaFallbackMessage(): string {
-  return 'This account requires MFA. CLI login does not support MFA yet. Use the Kablewy desktop app, then rerun `kablewy login` to reuse that desktop session.';
+  return 'This account requires MFA. Run `kablewy login` without --loopback so Kablewy can complete MFA in the browser, or reuse an existing Kablewy desktop session.';
 }
 
 export function resolveMagicLinkOrgId(callbackOrgId?: string, requestOrgId?: string): string {
@@ -380,12 +464,49 @@ export function describeHttp(action: string, res: { status: number; body: unknow
   const b = res.body as Record<string, unknown> | string | undefined;
   let detail = '';
   if (b && typeof b === 'object') {
-    const err = b.error as { message?: string } | undefined;
-    detail = err?.message || (b.message as string) || (b.detail as string) || JSON.stringify(b);
+    const err = b.error as { message?: string } | string | undefined;
+    if (typeof err === 'string') {
+      detail = b.error_description ? `${err}: ${String(b.error_description)}` : err;
+    } else {
+      detail = err?.message || (b.message as string) || (b.detail as string) || JSON.stringify(b);
+    }
   } else if (typeof b === 'string') {
     detail = b;
   }
   return `Failed to ${action} (HTTP ${res.status})${detail ? `: ${detail}` : ''}`;
+}
+
+export function makeCodeVerifier(): string {
+  return base64Url(randomBytes(32));
+}
+
+export function codeChallengeForVerifier(verifier: string): string {
+  return base64Url(createHash('sha256').update(verifier).digest());
+}
+
+export function buildOAuthAuthorizeUrl(
+  base: string,
+  args: { redirectUri: string; state: string; codeChallenge: string }
+): string {
+  const url = new URL('/v1/oauth/authorize', `${trimTrailingSlashes(base)}/`);
+  url.searchParams.set('response_type', 'code');
+  url.searchParams.set('client_id', OAUTH_CLIENT_ID);
+  url.searchParams.set('redirect_uri', args.redirectUri);
+  url.searchParams.set('code_challenge', args.codeChallenge);
+  url.searchParams.set('code_challenge_method', 'S256');
+  url.searchParams.set('state', args.state);
+  url.searchParams.set('scope', OAUTH_SCOPE);
+  return url.toString();
+}
+
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) end--;
+  return value.slice(0, end);
+}
+
+function base64Url(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 }
 
 function asString(v: unknown): string {
@@ -421,6 +542,128 @@ async function postJson(url: string, body: unknown, extraHeaders: Record<string,
     parsed = text;
   }
   return { ok: res.ok, status: res.status, body: parsed };
+}
+
+async function postForm(url: string, body: URLSearchParams): Promise<JsonResponse> {
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString()
+  });
+  const text = await res.text();
+  let parsed: unknown;
+  try {
+    parsed = text ? JSON.parse(text) : undefined;
+  } catch {
+    parsed = text;
+  }
+  return { ok: res.ok, status: res.status, body: parsed };
+}
+
+async function openBrowser(url: string): Promise<boolean> {
+  const command =
+    process.platform === 'darwin'
+      ? 'open'
+      : process.platform === 'win32'
+        ? 'cmd'
+        : 'xdg-open';
+  const args =
+    process.platform === 'darwin'
+      ? [url]
+      : process.platform === 'win32'
+        ? ['/c', 'start', '', url.replace(/&/g, '^&')]
+        : [url];
+
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(command, args, { detached: true, stdio: 'ignore' });
+      let settled = false;
+      child.once('error', () => {
+        settled = true;
+        resolve(false);
+      });
+      child.once('spawn', () => {
+        if (!settled) {
+          child.unref();
+          resolve(true);
+        }
+      });
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+interface OAuthCallback {
+  code?: string;
+  error?: string;
+}
+
+interface OAuthLoopback {
+  port: number;
+  wait: () => Promise<OAuthCallback>;
+  close: () => void;
+}
+
+function startOAuthLoopback(state: string, timeoutMs: number): Promise<OAuthLoopback> {
+  return new Promise<OAuthLoopback>((resolveListener, rejectListener) => {
+    let settle!: (cb: OAuthCallback) => void;
+    let fail!: (err: Error) => void;
+    const done = new Promise<OAuthCallback>((res, rej) => {
+      settle = res;
+      fail = rej;
+    });
+    const timer = setTimeout(
+      () => fail(new Error('Login timed out waiting for browser authorization (2 min). Rerun `kablewy login` to try again.')),
+      timeoutMs
+    );
+
+    const server = http.createServer((req, res) => {
+      let handled: OAuthCallback | null = null;
+      try {
+        const url = new URL(req.url || '', 'http://127.0.0.1');
+        if (url.pathname !== OAUTH_CALLBACK_PATH) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' }).end('Not found');
+          return;
+        }
+        const cbState = url.searchParams.get('state') || '';
+        const code = url.searchParams.get('code') || '';
+        const error = url.searchParams.get('error') || '';
+        if (cbState !== state) {
+          res.writeHead(400, { 'Content-Type': 'text/html' }).end('<p>Invalid sign-in callback. You can close this window.</p>');
+          return;
+        }
+        res
+          .writeHead(200, { 'Content-Type': 'text/html' })
+          .end('<html><body><p>Kablewy CLI sign-in complete. You may close this window.</p><script>setTimeout(function(){window.close()},1500)</script></body></html>');
+        handled = error ? { error } : { code };
+      } catch {
+        res.writeHead(400, { 'Content-Type': 'text/plain' }).end('Bad request');
+      }
+      if (handled) {
+        clearTimeout(timer);
+        settle(handled);
+      }
+    });
+
+    server.on('error', rejectListener);
+    server.listen(0, '127.0.0.1', () => {
+      const addr = server.address();
+      const port = addr && typeof addr === 'object' ? addr.port : 0;
+      resolveListener({
+        port,
+        wait: () => done,
+        close: () => {
+          clearTimeout(timer);
+          try {
+            server.close();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    });
+  });
 }
 
 interface LoopbackCallback {

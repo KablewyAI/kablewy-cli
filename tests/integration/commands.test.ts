@@ -88,6 +88,7 @@ describe('Command Integration Tests', () => {
       expect(optionNames).toContain('--ttl');
       expect(optionNames).toContain('--loopback');
       expect(optionNames).toContain('--shell');
+      expect(optionNames).toContain('--no-browser');
     });
   });
 

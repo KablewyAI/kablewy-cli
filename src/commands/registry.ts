@@ -36,12 +36,12 @@ export class CommandRegistry {
     const builtInCommands: CommandDefinition[] = [
       {
         name: 'login',
-        description: 'Sign in with a magic link and store a scoped API key',
+        description: 'Sign in with browser authorization and store a scoped API key',
         version: CLI_VERSION,
         examples: [
           'kablewy login',
-          'kablewy login --email you@org.com',
-          'kablewy login --email ci@org.com --ttl 15m'
+          'kablewy login --no-browser',
+          'kablewy login --ttl 15m --name "CI smoke key"'
         ],
         createCommand: createLoginCommand
       },
