@@ -127,13 +127,15 @@ kablewy docs status <documentId>
 kablewy docs delete <documentId> --yes    # prompts without --yes
 ```
 
-Container-routed ingestion (only for deployments where Kablewy has provided a dedicated document-processing worker endpoint — usually high-volume, private, or compliance-controlled):
+Container-routed ingestion is an enterprise/private deployment path. It only works when Kablewy has explicitly provisioned a dedicated document-processing worker endpoint and a processor token for that customer or deployment. Normal users should use `kablewy docs upload` without `--use-container`.
 
 ```bash
 export KABLEWY_DOC_WORKER_URL=https://doc-worker.example.com
 export KABLEWY_DOC_PROCESSOR_TOKEN=<doc-processor-token>
 kablewy docs upload ./documents/*.pdf --use-container
 ```
+
+`--use-container` requires both `KABLEWY_DOC_WORKER_URL` and `KABLEWY_DOC_PROCESSOR_TOKEN` (or the matching CLI flags). The CLI will not fall back to your normal scoped API key for this path.
 
 ## Chat
 

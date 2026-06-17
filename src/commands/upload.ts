@@ -66,9 +66,9 @@ export function createUploadSubcommand(name: string, context: CommandContext): C
     .option('--include-path-in-description', 'Append the source file path to the description when one is not provided explicitly')
     .option('--verbose', 'Show detailed progress information')
     // Container routing options (doc-worker)
-    .option('--use-container', 'Route uploads to the doc-worker container path (asynchronous, 202)')
-    .option('--doc-worker-url <url>', 'Doc-worker base URL (e.g., https://doc-worker.example.workers.dev)')
-    .option('--doc-processor-token <token>', 'Bearer token for doc-worker path route authentication')
+    .option('--use-container', 'Enterprise only: route uploads to a dedicated doc-worker endpoint')
+    .option('--doc-worker-url <url>', 'Dedicated doc-worker base URL provided by Kablewy')
+    .option('--doc-processor-token <token>', 'Dedicated bearer token for the doc-worker upload route')
     .action(async (patterns: string[], options: UploadOptions) => {
       await handleUpload(patterns, options, context);
     });
@@ -104,10 +104,9 @@ async function handleUpload(patterns: string[], options: UploadOptions, context:
       const useContainer = Boolean((options as any).useContainer);
       const cfgDocWorkerUrl = configMgr?.get ? (configMgr.get('docWorkerUrl') as string) : (process.env.KABLEWY_DOC_WORKER_URL as string);
       const cfgDocProcessorToken = configMgr?.get ? (configMgr.get('docProcessorToken') as string) : (process.env.KABLEWY_DOC_PROCESSOR_TOKEN as string);
-      const apiKey = normalizeApiKey(configMgr?.get ? (configMgr.get('apiKey') as string) : (process.env.KABLEWY_API_KEY as string));
       const docWorkerUrl = (((options as any).docWorkerUrl as string) || cfgDocWorkerUrl || '').replace(/\/+$/, '');
       const explicitToken = (options as any).docProcessorToken as string || cfgDocProcessorToken;
-      const tokenSource = useContainer ? (explicitToken ? 'doc-processor-token' : 'apiKey(fallback)') : 'apiKey';
+      const tokenSource = useContainer ? (explicitToken ? 'doc-processor-token' : 'missing doc-processor-token') : 'apiKey';
       if (useContainer) {
         output.info(`[container] Using doc-worker: ${docWorkerUrl || '(missing)'}, auth=${tokenSource}`);
       } else {
@@ -121,6 +120,20 @@ async function handleUpload(patterns: string[], options: UploadOptions, context:
         output.info(`${index + 1}. ${file.path} (${formatFileSize(file.size)})`);
       });
       return;
+    }
+
+    if ((options as any).useContainer) {
+      const configMgr = context.config as any;
+      const cfgDocWorkerUrl = configMgr?.get ? (configMgr.get('docWorkerUrl') as string) : (process.env.KABLEWY_DOC_WORKER_URL as string);
+      const cfgDocProcessorToken = configMgr?.get ? (configMgr.get('docProcessorToken') as string) : (process.env.KABLEWY_DOC_PROCESSOR_TOKEN as string);
+      const docWorkerUrl = (((options as any).docWorkerUrl as string) || cfgDocWorkerUrl || '').replace(/\/+$/, '');
+      const docProcessorToken = (options as any).docProcessorToken as string || cfgDocProcessorToken;
+      if (!docWorkerUrl) {
+        throw new Error('Missing --doc-worker-url (or KABLEWY_DOC_WORKER_URL) for --use-container');
+      }
+      if (!docProcessorToken) {
+        throw new Error('Missing --doc-processor-token (or KABLEWY_DOC_PROCESSOR_TOKEN) for --use-container');
+      }
     }
 
     const sessionId = options.sessionId || generateSessionId();
@@ -415,7 +428,7 @@ async function uploadFile(
   const cfgDocWorkerUrl = configMgr?.get ? (configMgr.get('docWorkerUrl') as string) : (process.env.KABLEWY_DOC_WORKER_URL as string);
   const cfgDocProcessorToken = configMgr?.get ? (configMgr.get('docProcessorToken') as string) : (process.env.KABLEWY_DOC_PROCESSOR_TOKEN as string);
   const docWorkerUrl = (((options as any).docWorkerUrl as string) || cfgDocWorkerUrl || '').replace(/\/+$/, '');
-  let docProcessorToken = (options as any).docProcessorToken as string || cfgDocProcessorToken;
+  const docProcessorToken = (options as any).docProcessorToken as string || cfgDocProcessorToken;
 
   const url = useContainer
     ? `${docWorkerUrl}/v1/documents/${orgId}/users/${userId}/process-upload`
@@ -484,10 +497,8 @@ async function uploadFile(
         if (!docWorkerUrl) {
           throw new Error('Missing --doc-worker-url (or KABLEWY_DOC_WORKER_URL) for --use-container');
         }
-        // Fallback: if no dedicated doc-processor token is set, reuse API key
         if (!docProcessorToken) {
-          docProcessorToken = apiKey;
-          logger.debug('Using API key as doc-worker token (fallback). Consider setting KABLEWY_DOC_PROCESSOR_TOKEN.');
+          throw new Error('Missing --doc-processor-token (or KABLEWY_DOC_PROCESSOR_TOKEN) for --use-container');
         }
         headers['Authorization'] = `Bearer ${docProcessorToken}`;
       } else {

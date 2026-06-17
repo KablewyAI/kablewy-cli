@@ -9,6 +9,7 @@ import {
   describeHttp,
   loadShellSession,
   mfaFallbackMessage,
+  resolveMagicLinkOrgId,
   CLI_KEY_CAPABILITIES
 } from '../../src/commands/login.js';
 
@@ -70,6 +71,20 @@ describe('login helpers', () => {
       expect(mfaFallbackMessage()).toContain('requires MFA');
       expect(mfaFallbackMessage()).toContain('desktop app');
       expect(mfaFallbackMessage()).toContain('rerun `kablewy login`');
+    });
+  });
+
+  describe('resolveMagicLinkOrgId', () => {
+    it('uses the organization ID returned through the desktop callback', () => {
+      expect(resolveMagicLinkOrgId('org-from-callback')).toBe('org-from-callback');
+    });
+
+    it('falls back to a request-time organization ID for older backend responses', () => {
+      expect(resolveMagicLinkOrgId('', 'org-from-request')).toBe('org-from-request');
+    });
+
+    it('throws when neither response contains an organization ID', () => {
+      expect(() => resolveMagicLinkOrgId()).toThrow('sign-in callback did not include an organization ID');
     });
   });
 

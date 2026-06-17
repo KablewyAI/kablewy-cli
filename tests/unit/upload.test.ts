@@ -273,5 +273,37 @@ describe('Upload Command', () => {
         expect.stringContaining('1 successful, 0 skipped, 0 failed')
       );
     });
+
+    it('requires a dedicated doc-processor token for container uploads', async () => {
+      await runUpload([
+        '--use-container',
+        '--doc-worker-url',
+        'https://doc-worker.example.com'
+      ]);
+
+      expect(process.exitCode).toBe(1);
+      expect(mockRequest).not.toHaveBeenCalled();
+      expect(context.output.error).toHaveBeenCalledWith(
+        expect.stringContaining('Missing --doc-processor-token')
+      );
+    });
+
+    it('routes container uploads to the doc-worker with the dedicated token', async () => {
+      mockRequest.mockResolvedValue(uploadResponse(202, { data: { document_id: 'doc-queued' } }));
+
+      await runUpload([
+        '--use-container',
+        '--doc-worker-url',
+        'https://doc-worker.example.com/',
+        '--doc-processor-token',
+        'processor-token'
+      ]);
+
+      expect(mockRequest).toHaveBeenCalledTimes(1);
+      const [url, requestOptions] = mockRequest.mock.calls[0];
+      expect(url).toBe('https://doc-worker.example.com/v1/documents/test-org/users/test-user/process-upload');
+      expect((requestOptions as any).headers.Authorization).toBe('Bearer processor-token');
+      expect(process.exitCode).toBeUndefined();
+    });
   });
 });

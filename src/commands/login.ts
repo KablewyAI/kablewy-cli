@@ -291,15 +291,12 @@ async function loopbackLogin(args: LoopbackArgs): Promise<void> {
     const ml = await postJson(`${base}/v1/org/magic-links`, { email, clientType: 'desktop', redirectUrl });
     if (!ml.ok) throw new Error(describeHttp('request a magic link', ml));
     const mlBody = ml.body as { orgId?: string } | undefined;
-    if (!mlBody?.orgId) {
-      throw new Error('No Kablewy account found for that email, or it is not eligible for desktop sign-in.');
-    }
 
     // 2. Wait for the user to click the emailed link; the browser forwards the ml_ token here.
     output.success(`📧 Check your email (${email}) and click the Kablewy sign-in link.`);
     output.info('Waiting for confirmation (2 min)...');
     const callback = await loopback.wait();
-    const orgId = callback.orgId || mlBody.orgId;
+    const orgId = resolveMagicLinkOrgId(callback.orgId, mlBody?.orgId);
 
     // 3. Exchange the ml_ token for a session token.
     const verify = await postJson(`${base}/v1/org/${orgId}/magic-links/verify`, {
@@ -366,6 +363,16 @@ export function defaultKeyName(now: Date): string {
 
 export function mfaFallbackMessage(): string {
   return 'This account requires MFA. CLI login does not support MFA yet. Use the Kablewy desktop app, then rerun `kablewy login` to reuse that desktop session.';
+}
+
+export function resolveMagicLinkOrgId(callbackOrgId?: string, requestOrgId?: string): string {
+  const orgId = callbackOrgId || requestOrgId || '';
+  if (!orgId) {
+    throw new Error(
+      'The sign-in callback did not include an organization ID. Open the latest emailed Kablewy sign-in link on this same machine, or rerun `kablewy login`.'
+    );
+  }
+  return orgId;
 }
 
 /** Turn a server error envelope ({error:{message}} | {message} | {detail}) into a readable line. */
@@ -441,7 +448,7 @@ function startLoopback(state: string, timeoutMs: number): Promise<Loopback> {
       fail = rej;
     });
     const timer = setTimeout(
-      () => fail(new Error('Login timed out waiting for the email link (2 min). Re-run `kablewy login`.')),
+      () => fail(new Error('Login timed out waiting for the email link (2 min). If no email arrived, confirm this email has access to Kablewy, then rerun `kablewy login`.')),
       timeoutMs
     );
 
