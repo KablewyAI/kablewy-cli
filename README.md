@@ -35,11 +35,12 @@ Node.js `>= 18`. macOS and Linux are supported; **Windows is not yet tested**.
 
 ## Authentication
 
-`kablewy login` signs you in and stores a scoped API key for CLI use. The preferred path reuses an existing Kablewy desktop session; otherwise the CLI uses a browser magic-link loopback flow.
+`kablewy login` signs you in and stores a scoped API key for CLI use. If an existing Kablewy desktop session is available, the CLI can reuse it. Otherwise it opens Kablewy in your browser, uses your normal web login/SSO/MFA session, and returns a one-time OAuth code to the CLI through a local loopback callback.
 
 ```bash
 kablewy login
-kablewy login --email you@example.com
+kablewy login --no-browser        # print the authorization URL instead of opening it
+kablewy login --loopback --email you@example.com # legacy email-link fallback
 kablewy login --ttl 12h --name "CI smoke key"
 kablewy whoami                  # verifies the active credential with a real request
 kablewy logout                  # clears local credentials, revokes the key when possible
@@ -52,7 +53,7 @@ kablewy auth keys list
 kablewy auth keys revoke <keyId>
 ```
 
-If your organization requires MFA, sign in through the Kablewy desktop or web app first, then rerun `kablewy login` so the CLI can reuse that authenticated session. Full in-CLI MFA entry is deferred in `0.1.0`.
+If your organization requires MFA, run the default browser-based `kablewy login` flow. The CLI does not collect MFA codes itself; Kablewy handles MFA in the browser before returning to the local CLI callback. The legacy `--loopback` email-link fallback is not MFA-capable.
 
 Normal CLI commands use only scoped Kablewy API keys that start with `api_`. Browser, desktop, magic-link, and refresh tokens are used only during `kablewy login` and are rejected if passed through `--api-key`, `KABLEWY_API_KEY`, or `config --set apiKey=...`.
 
@@ -209,7 +210,7 @@ kablewy mcp deploy ./dist/worker.mjs \
   --tool-prefix crm
 ```
 
-The worker module must be a built ES module exporting a Worker `fetch` handler that implements MCP JSON-RPC methods such as `initialize`, `tools/list`, `tools/call`, and `ping`. OAuth catalog templates require browser OAuth setup in the Kablewy app in `0.1.0`; after setup, manage them from the CLI as usual.
+The worker module must be a built ES module exporting a Worker `fetch` handler that implements MCP JSON-RPC methods such as `initialize`, `tools/list`, `tools/call`, and `ping`. OAuth catalog templates require browser OAuth setup in the Kablewy app in the `0.1.x` beta; after setup, manage them from the CLI as usual.
 
 ## Quick Actions
 
@@ -330,13 +331,13 @@ kablewy docs list --json
 
 ## Public beta scope
 
-`0.1.0` is a public beta for deterministic client workflows, not full web-app parity. The public command surface is: `login` / `logout` / `whoami`, `auth keys list|revoke`, `docs upload|list|search|get|delete|status` (with top-level `upload` alias), `chat`, `tools`, `mcp`, `quick-actions`, `webhooks`, `skills` (with `skill` alias), `config`, and `status`.
+`0.1.x` is a public beta for deterministic client workflows, not full web-app parity. The public command surface is: `login` / `logout` / `whoami`, `auth keys list|revoke`, `docs upload|list|search|get|delete|status` (with top-level `upload` alias), `chat`, `tools`, `mcp`, `quick-actions`, `webhooks`, `skills` (with `skill` alias), `config`, and `status`.
 
-The first beta intentionally does not expose plugin management, graph exploration, workcells, image/video generation, queue/log inspection, full workflow-job authoring, or admin command groups. OAuth entry for MCP catalog templates remains app-led in `0.1.0`.
+The first beta intentionally does not expose plugin management, graph exploration, workcells, image/video generation, queue/log inspection, full workflow-job authoring, or admin command groups. OAuth entry for MCP catalog templates remains app-led in `0.1.x`.
 
 ## Troubleshooting
 
-**Authentication errors (exit `65`).** Your stored key is missing, expired, revoked, or not a scoped `api_` key. Re-run `kablewy login`, then verify with `kablewy whoami --json`. If login reports MFA is required, sign in through the Kablewy app first and rerun `kablewy login` to reuse that session.
+**Authentication errors (exit `65`).** Your stored key is missing, expired, revoked, or not a scoped `api_` key. Re-run `kablewy login`, then verify with `kablewy whoami --json`. If a browser cannot be opened automatically, run `kablewy login --no-browser` and paste the printed URL into your browser.
 
 **429 / rate limiting on bulk uploads.** `docs upload` retries rate-limited files automatically (default 3 attempts, configurable with `--retry` / `--retry-delay`), honors the server's `Retry-After` header (capped at 60 s), and adaptively backs off concurrency on repeated errors. For large batches, lower `--concurrency` and resume any remaining failures with `--resume-from <sessionId>`.
 

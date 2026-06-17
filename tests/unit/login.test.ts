@@ -10,6 +10,9 @@ import {
   loadShellSession,
   mfaFallbackMessage,
   resolveMagicLinkOrgId,
+  makeCodeVerifier,
+  codeChallengeForVerifier,
+  buildOAuthAuthorizeUrl,
   CLI_KEY_CAPABILITIES
 } from '../../src/commands/login.js';
 
@@ -67,10 +70,37 @@ describe('login helpers', () => {
   });
 
   describe('mfaFallbackMessage', () => {
-    it('gives a clear tested fallback for MFA-required accounts', () => {
+    it('points MFA-required accounts at the browser OAuth path', () => {
       expect(mfaFallbackMessage()).toContain('requires MFA');
-      expect(mfaFallbackMessage()).toContain('desktop app');
-      expect(mfaFallbackMessage()).toContain('rerun `kablewy login`');
+      expect(mfaFallbackMessage()).toContain('without --loopback');
+      expect(mfaFallbackMessage()).toContain('browser');
+    });
+  });
+
+  describe('OAuth PKCE helpers', () => {
+    it('generates an RFC 7636-length code verifier and matching S256 challenge', () => {
+      const verifier = makeCodeVerifier();
+      const challenge = codeChallengeForVerifier(verifier);
+
+      expect(verifier).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect(challenge).not.toBe(verifier);
+    });
+
+    it('builds the first-party CLI authorize URL', () => {
+      const url = new URL(buildOAuthAuthorizeUrl('https://kablewy.ai', {
+        redirectUri: 'http://127.0.0.1:49152/oauth/callback',
+        state: 'state-123',
+        codeChallenge: 'a'.repeat(43)
+      }));
+
+      expect(url.origin).toBe('https://kablewy.ai');
+      expect(url.pathname).toBe('/v1/oauth/authorize');
+      expect(url.searchParams.get('response_type')).toBe('code');
+      expect(url.searchParams.get('client_id')).toBe('kablewy-cli');
+      expect(url.searchParams.get('redirect_uri')).toBe('http://127.0.0.1:49152/oauth/callback');
+      expect(url.searchParams.get('code_challenge_method')).toBe('S256');
+      expect(url.searchParams.get('scope')).toBe('cli');
     });
   });
 
@@ -99,6 +129,13 @@ describe('login helpers', () => {
         .toBe('Failed to verify (HTTP 401): Invalid magic link');
       expect(describeHttp('verify', { status: 400, body: { detail: 'bad token' } }))
         .toBe('Failed to verify (HTTP 400): bad token');
+    });
+
+    it('reads OAuth error envelopes', () => {
+      expect(describeHttp('complete browser authorization', {
+        status: 400,
+        body: { error: 'invalid_grant', error_description: 'Authorization code expired' }
+      })).toBe('Failed to complete browser authorization (HTTP 400): invalid_grant: Authorization code expired');
     });
 
     it('reads a plain string body', () => {
