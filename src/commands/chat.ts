@@ -1335,7 +1335,7 @@ async function streamProcessChatWithCallbacks(
     isAgentMode ? 'You are running inside Kablewy Agent, a beta local terminal agent mode.' : 'You are running inside the Kablewy CLI Enhanced TUI.',
     'Capabilities for this terminal session:',
     isAgentMode
-      ? '- Local tools: Prefer LS, Read, Grep, Write, Edit, and Bash under the current project root. Bash is restricted to read-only commands; use Write/Edit for file changes. Mutating or dangerous shell commands are blocked unless the user explicitly runs them with ! command approval.'
+      ? '- Local tools: Prefer fs_list_files, fs_read_file, fs_search_files, fs_write_file, fs_edit_file, and fs_run_shell under the current project root. Standard aliases LS, Read, Grep, Write, Edit, and Bash are also supported. fs_run_shell/Bash is restricted to read-only commands; use fs_write_file/fs_edit_file for file changes. Mutating or dangerous shell commands are blocked unless the user explicitly runs them with ! command approval.'
       : '- Shell: The user can execute shell commands directly by prefixing with !, and may enable autorun. When you propose commands, output them in bash code fences or lines starting with "$ ". Keep them safe and reproducible. Prefer read-only commands by default. Use the project root as the working directory unless stated otherwise.',
     isAgentMode ? '- Shell UX: If a command is mutating or destructive, propose it in a bash code fence or ask the user to run it with ! so the terminal approval flow can protect the workspace.' : '',
     '- File attachments: The user can attach files using @ path. You can assume attached files are included in the hidden context even if the transcript only shows the paths.',
