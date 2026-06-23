@@ -185,7 +185,7 @@ Inside the agent:
 /help                       show agent controls
 ```
 
-The model can call local tools named `LS`, `Read`, `Grep`, `Write`, `Edit`, and `Bash` during agent turns. `Write` and `Edit` are constrained to the agent root by default. Autonomous `Bash` is restricted to read-only commands; mutating or dangerous shell commands must go through the explicit `!` approval flow. Use `--allow-shell-without-confirmation` only in trusted local sessions where immediate `!` command execution is expected.
+The model can call local tools for listing, reading, searching, writing, and editing files during agent turns. The stable tool names are `fs_list_files`, `fs_read_file`, `fs_search_files`, `fs_write_file`, `fs_edit_file`, and `fs_run_shell`; familiar aliases `LS`, `Read`, `Grep`, `Write`, `Edit`, and `Bash` are also supported. Write/edit tools are constrained to the agent root by default. Autonomous shell execution is restricted to read-only commands; mutating or dangerous shell commands must go through the explicit `!` approval flow. Use `--allow-shell-without-confirmation` only in trusted local sessions where immediate `!` command execution is expected.
 
 Local safety options:
 
