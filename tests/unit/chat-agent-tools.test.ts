@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -6,6 +6,7 @@ import {
   executeLocalAgentToolCall,
   getLocalFsTools,
   resolveRequestToolsForChat,
+  streamProcessChatWithCallbacks,
 } from '../../src/commands/chat.js';
 import type { AgentSafetyConfig } from '../../src/utils/agent-safety.js';
 
@@ -56,6 +57,51 @@ describe('agent local tools', () => {
     expect(agentTools?.map((tool) => tool.name)).toContain('Write');
     expect(chatTools).toBeNull();
     expect(disabledTools).toBeNull();
+  });
+
+  it('sends agent local tools with explicit auto tool choice in streamed requests', async () => {
+    const { dir, safety } = tempSafety();
+    let capturedBody: any;
+    const fetchMock = vi.fn(async (_url: string, init: any) => {
+      capturedBody = JSON.parse(String(init?.body || '{}'));
+      return new Response('data: {"type":"content","content":"ok"}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const chunks: string[] = [];
+      await streamProcessChatWithCallbacks('chat-1', 'list the files in this directory', {
+        agent: true,
+        agentSafety: safety,
+      } as any, {
+        config: {
+          get: (key: string) => ({
+            apiUrl: 'https://api.example.com',
+            orgId: 'org-1',
+            userId: 'user-1',
+            apiKey: 'api_test_key',
+          } as Record<string, string>)[key],
+        },
+        telemetry: { command: 'agent' },
+      } as any, {
+        onText: (chunk) => chunks.push(chunk),
+        onToolEvent: () => undefined,
+      });
+
+      const args = capturedBody?.params?.arguments;
+      const toolNames = args?.tools?.map((tool: any) => tool.name) || [];
+      expect(args?.tool_choice).toBe('auto');
+      expect(toolNames).toContain('fs_list_files');
+      expect(toolNames).toContain('fs_run_shell');
+      expect(chunks.join('')).toContain('ok');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+    }
   });
 
   it('writes, reads, edits, searches, lists, and runs read-only shell commands under cwd', async () => {
