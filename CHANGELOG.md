@@ -5,6 +5,19 @@ All notable changes to `@kablewy/cli` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8] - 2026-06-23
+
+### Added
+
+- **Update notice** — Interactive terminal commands now check npm at most once
+  per day and print a short advisory notice when a newer `@kablewy/cli`
+  version is available. The CLI never auto-updates itself.
+
+### Changed
+
+- Update notices are suppressed in CI, non-interactive output, JSON mode, and
+  when `KABLEWY_DISABLE_UPDATE_CHECK=1` is set.
+
 ## [0.1.7] - 2026-06-23
 
 ### Fixed
@@ -133,6 +146,7 @@ web-app parity.
 - **Secret redaction** — bearer tokens, refresh tokens, API keys, cookies,
   and authorization headers are redacted in human output and diagnostics.
 
+[0.1.8]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.8
 [0.1.7]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.7
 [0.1.6]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.6
 [0.1.5]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.5

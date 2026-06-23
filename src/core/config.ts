@@ -17,6 +17,7 @@ const defaultConfig: KablewyConfig = {
   apiKeyExpiresAt: '',
   docWorkerUrl: '',
   docProcessorToken: '',
+  updateCheckLastAt: '',
   concurrency: 3,
   retryAttempts: 3,
   retryDelay: 1000,
@@ -94,6 +95,9 @@ export class ConfigManager {
           type: 'string'
         },
         docProcessorToken: {
+          type: 'string'
+        },
+        updateCheckLastAt: {
           type: 'string'
         },
         concurrency: {
