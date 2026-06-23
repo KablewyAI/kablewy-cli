@@ -167,7 +167,7 @@ kablewy chat --message "Stream the answer" --stream
 
 ## Agent
 
-`kablewy agent` starts a beta local terminal agent mode. It is useful for project inspection, approved shell commands, local file attachments, Kablewy context, and model-switched terminal sessions. It is not intended to be full Claude Code parity in `0.1.x`.
+`kablewy agent` starts a beta local terminal agent mode. It is useful for project inspection, local file reads/searches, root-bound file writes/edits, approved shell commands, local file attachments, Kablewy context, and model-switched terminal sessions. It is not intended to be full Claude Code parity in `0.1.x`.
 
 ```bash
 kablewy agent
@@ -185,7 +185,7 @@ Inside the agent:
 /help                       show agent controls
 ```
 
-By default, shell commands require an explicit `y` confirmation before they run. Use `--allow-shell-without-confirmation` only in trusted local sessions where immediate `!` command execution is expected.
+The model can call local tools named `LS`, `Read`, `Grep`, `Write`, `Edit`, and `Bash` during agent turns. `Write` and `Edit` are constrained to the agent root by default. Autonomous `Bash` is restricted to read-only commands; mutating or dangerous shell commands must go through the explicit `!` approval flow. Use `--allow-shell-without-confirmation` only in trusted local sessions where immediate `!` command execution is expected.
 
 Local safety options:
 
