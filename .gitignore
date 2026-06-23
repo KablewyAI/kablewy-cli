@@ -96,6 +96,7 @@ jspm_packages/
 .kablewy-cli/
 upload-sessions/
 temp/
+graphify-out/
 
 # Non-code artifacts (logs, transcripts, binary docs)
 *.txt
