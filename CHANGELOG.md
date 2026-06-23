@@ -14,10 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   agent can inspect project files instead of asking users to paste `ls` output.
 - **Agent writes** — Added root-bound local write/edit tools for requested file
   changes, with exact replacement semantics for edits.
-- **Agent aliases** — Added familiar local tool aliases (`LS`, `Read`, `Grep`,
-  `Bash`, `Write`, `Edit`) alongside the `fs_*` compatibility names.
-- **Safety** — Autonomous `Bash`/`fs_run_shell` execution is restricted to
-  read-only commands; mutating or dangerous shell commands still require the
+- **Agent aliases** — Added familiar local tool names for models that prefer
+  standard terminal-agent vocabulary.
+- **Safety** — Autonomous shell execution is restricted to read-only commands;
+  mutating or dangerous shell commands still require the
   explicit `!` approval flow.
 
 ## [0.1.6] - 2026-06-23
