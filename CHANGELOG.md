@@ -5,6 +5,21 @@ All notable changes to `@kablewy/cli` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7] - 2026-06-23
+
+### Fixed
+
+- **Agent local tools** — `kablewy agent` now sends local filesystem/shell tool
+  schemas to the backend and handles frontend-tool continuation events, so the
+  agent can inspect project files instead of asking users to paste `ls` output.
+- **Agent writes** — Added root-bound local write/edit tools for requested file
+  changes, with exact replacement semantics for edits.
+- **Agent aliases** — Added familiar local tool aliases (`LS`, `Read`, `Grep`,
+  `Bash`, `Write`, `Edit`) alongside the `fs_*` compatibility names.
+- **Safety** — Autonomous `Bash`/`fs_run_shell` execution is restricted to
+  read-only commands; mutating or dangerous shell commands still require the
+  explicit `!` approval flow.
+
 ## [0.1.6] - 2026-06-23
 
 ### Fixed
@@ -118,6 +133,7 @@ web-app parity.
 - **Secret redaction** — bearer tokens, refresh tokens, API keys, cookies,
   and authorization headers are redacted in human output and diagnostics.
 
+[0.1.7]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.7
 [0.1.6]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.6
 [0.1.5]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.5
 [0.1.4]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.4
