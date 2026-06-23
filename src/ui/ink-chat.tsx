@@ -36,6 +36,11 @@ export function runInkChat(ui: React.ReactElement) {
   return render(ui);
 }
 
+function formatRecoverableError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return redactText(message || 'unknown error');
+}
+
 export const InkChat: React.FC<InkChatProps> = ({
   title = 'Kablewy Chat',
   model = 'gpt-5.4',
@@ -431,25 +436,32 @@ export const InkChat: React.FC<InkChatProps> = ({
             '```'
           ].join('\n');
         }
-        await startStreaming(payload, [], {
-          onText: (chunk: string) => {
-            setPhase('Generating');
-            setMessages(prev => {
-              const last = prev[prev.length - 1];
-              if (!last || last.role !== 'assistant') {
-                return [...prev, { role: 'assistant', text: chunk }];
-              }
-              const updated = [...prev];
-              updated[updated.length - 1] = { role: 'assistant', text: last.text + chunk };
-              return updated;
-            });
-          },
-          onTool: (evt: string) => setMessages(prev => [...prev, { role: 'tool', text: evt }]),
-          onDone: () => setPhase('Idle')
-        }, { model: activeModel });
+        try {
+          await startStreaming(payload, [], {
+            onText: (chunk: string) => {
+              setPhase('Generating');
+              setMessages(prev => {
+                const last = prev[prev.length - 1];
+                if (!last || last.role !== 'assistant') {
+                  return [...prev, { role: 'assistant', text: chunk }];
+                }
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: 'assistant', text: last.text + chunk };
+                return updated;
+              });
+            },
+            onTool: (evt: string) => setMessages(prev => [...prev, { role: 'tool', text: evt }]),
+            onDone: () => setPhase('Idle')
+          }, { model: activeModel });
+        } catch (error: unknown) {
+          const message = formatRecoverableError(error);
+          setMessages(prev => [...prev, { role: 'tool', text: `model request failed while summarizing shell output: ${message}` }]);
+          await writeAudit('model_request_failed', { source: 'shell_summary', error: message });
+          setPhase('Idle');
         }
-        if (!shouldSummarize) setPhase('Idle');
-        resolve();
+      }
+      if (!shouldSummarize) setPhase('Idle');
+      resolve();
       });
     });
   };
@@ -598,40 +610,48 @@ export const InkChat: React.FC<InkChatProps> = ({
     }
     const history = selected.reverse();
 
-    await startStreaming(attachmentsBlob + finalUserText, history, {
-      onText: (chunk: string) => {
-        setPhase('Generating');
-        responseBuf += chunk;
-        setMessages(prev => {
-          const last = prev[prev.length - 1];
-          if (!last || last.role !== 'assistant') {
-            return [...prev, { role: 'assistant', text: chunk }];
+    try {
+      await startStreaming(attachmentsBlob + finalUserText, history, {
+        onText: (chunk: string) => {
+          setPhase('Generating');
+          responseBuf += chunk;
+          setMessages(prev => {
+            const last = prev[prev.length - 1];
+            if (!last || last.role !== 'assistant') {
+              return [...prev, { role: 'assistant', text: chunk }];
+            }
+            const updated = [...prev];
+            updated[updated.length - 1] = { role: 'assistant', text: last.text + chunk };
+            return updated;
+          });
+          updateTokenInfo();
+        },
+        onTool: (evt: string) => {
+          const nameMatch = /tool_call: (.+)$/i.exec(evt);
+          if (nameMatch) setPhase('Tool');
+          if (/tool_result/i.test(evt)) setPhase('Waiting');
+          if (/tool_call: (render_artifact|apply_patch|edit|update_file|create_file)/i.test(evt)) {
+            setFilesEdited((n) => n + 1);
           }
-          const updated = [...prev];
-          updated[updated.length - 1] = { role: 'assistant', text: last.text + chunk };
-        return updated; });
-        updateTokenInfo();
-      },
-      onTool: (evt: string) => {
-        const nameMatch = /tool_call: (.+)$/i.exec(evt);
-        if (nameMatch) setPhase('Tool');
-        if (/tool_result/i.test(evt)) setPhase('Waiting');
-        if (/tool_call: (render_artifact|apply_patch|edit|update_file|create_file)/i.test(evt)) {
-          setFilesEdited((n) => n + 1);
-        }
-        setMessages(prev => [...prev, { role: 'tool', text: evt }]);
-        updateTokenInfo();
-      },
-      onDone: () => setPhase('Idle')
-    }, { model: activeModel });
-    await writeAudit('assistant_message', { text: responseBuf });
-    // Clear staged attachments after send
-    setPendingAttachmentSnippets([]);
-    setLastFilesAttached(0);
+          setMessages(prev => [...prev, { role: 'tool', text: evt }]);
+          updateTokenInfo();
+        },
+        onDone: () => setPhase('Idle')
+      }, { model: activeModel });
+      await writeAudit('assistant_message', { text: responseBuf });
+      // Clear staged attachments only after a completed request.
+      setPendingAttachmentSnippets([]);
+      setLastFilesAttached(0);
 
-    // Auto-run shell commands suggested by the assistant output
-    if (autoRun && responseBuf.trim()) {
-      await runAutoCommands(responseBuf);
+      // Auto-run shell commands suggested by the assistant output.
+      if (autoRun && responseBuf.trim()) {
+        await runAutoCommands(responseBuf);
+      }
+    } catch (error: unknown) {
+      const message = formatRecoverableError(error);
+      setMessages(prev => [...prev, { role: 'tool', text: `model request failed: ${message}` }]);
+      await writeAudit('model_request_failed', { source: 'user_message', error: message });
+      setPhase('Idle');
     }
   };
 

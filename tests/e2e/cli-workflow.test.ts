@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach } from 'vitest';
 import { spawn } from 'child_process';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { join } from 'path';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, unlinkSync } from 'fs';
 import { tmpdir } from 'os';
@@ -45,6 +47,42 @@ function runCli(args: string[], extraEnv: Record<string, string> = {}): Promise<
     child.on('error', reject);
     child.on('close', (code) => resolvePromise({ code, stdout, stderr }));
   });
+}
+
+async function readRequestJson(req: IncomingMessage): Promise<any> {
+  let body = '';
+  for await (const chunk of req) body += chunk.toString();
+  return JSON.parse(body);
+}
+
+function testIdentityEnv(apiUrl: string): Record<string, string> {
+  return {
+    KABLEWY_API_URL: apiUrl,
+    KABLEWY_ORG_ID: 'test-org',
+    KABLEWY_USER_ID: 'test-user',
+    KABLEWY_API_KEY: 'api_test_key'
+  };
+}
+
+async function withMockMcpServer(
+  handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>,
+  run: (apiUrl: string) => Promise<void>
+): Promise<void> {
+  const server = createServer((req, res) => {
+    void handler(req, res).catch((error: unknown) => {
+      res.statusCode = 500;
+      res.end(error instanceof Error ? error.message : String(error));
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = server.address() as AddressInfo;
+    await run(`http://127.0.0.1:${address.port}`);
+  } finally {
+    await new Promise<void>((resolve, reject) => {
+      server.close((error) => error ? reject(error) : resolve());
+    });
+  }
 }
 
 describe.skipIf(!cliBuilt)('CLI End-to-End Workflow Tests', () => {
@@ -207,6 +245,49 @@ describe.skipIf(!cliBuilt)('CLI End-to-End Workflow Tests', () => {
       expect(code).toBe(0);
       expect(stdout).toContain('processing status');
       expect(stdout).toContain('--json');
+    });
+  });
+
+  describe('Chat Streaming Workflow', () => {
+    it('should generate a chatId for first-turn streamed chat requests', async () => {
+      let capturedBody: any;
+      await withMockMcpServer(async (_req, res) => {
+        capturedBody = await readRequestJson(_req);
+        res.writeHead(200, { 'content-type': 'text/event-stream' });
+        res.end('data: {"type":"content","content":"ok"}\n\ndata: [DONE]\n\n');
+      }, async (apiUrl) => {
+        const { code, stdout, stderr } = await runCli(['chat', '--message', 'hello', '--stream'], testIdentityEnv(apiUrl));
+
+        expect(code).toBe(0);
+        expect(stdout).toContain('ok');
+        expect(stderr).toBe('');
+      });
+
+      const args = capturedBody?.params?.arguments;
+      expect(capturedBody?.params?.name).toBe('process_chat');
+      expect(args?.chatId).toEqual(expect.any(String));
+      expect(args.chatId.length).toBeGreaterThan(10);
+      expect(args?.options?.chatId).toBe(args.chatId);
+      expect(args?.options?.createChatIfNeeded).toBe(true);
+    });
+
+    it('should surface stream backend error bodies and request ids', async () => {
+      await withMockMcpServer(async (_req, res) => {
+        await readRequestJson(_req);
+        res.writeHead(400, {
+          'content-type': 'application/json',
+          'x-request-id': 'req-stream-test'
+        });
+        res.end(JSON.stringify({ error: { message: 'chatId is required for process_chat' } }));
+      }, async (apiUrl) => {
+        const { code, stdout, stderr } = await runCli(['chat', '--message', 'hello', '--stream'], testIdentityEnv(apiUrl));
+        const combined = stdout + stderr;
+
+        expect(code).not.toBe(0);
+        expect(combined).toContain('chatId is required for process_chat');
+        expect(combined).toContain('req-stream-test');
+        expect(combined).not.toContain('Stream request failed (400)\n');
+      });
     });
   });
 

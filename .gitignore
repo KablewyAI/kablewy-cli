@@ -92,6 +92,7 @@ jspm_packages/
 .vscode-test
 
 # CLI specific
+.kablewy/
 .kablewy-cli/
 upload-sessions/
 temp/
