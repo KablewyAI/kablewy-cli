@@ -5,6 +5,15 @@ All notable changes to `@kablewy/cli` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9] - 2026-06-23
+
+### Fixed
+
+- **Agent local tool selection** — `kablewy agent` streamed requests now send
+  local filesystem and shell tools with explicit automatic tool choice, so
+  backend tool selection can expose them to the model instead of falling back
+  to `search_tools` only.
+
 ## [0.1.8] - 2026-06-23
 
 ### Added

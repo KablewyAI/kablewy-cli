@@ -1308,7 +1308,7 @@ async function executeLocalContinuationTools(
   return results;
 }
 
-async function streamProcessChatWithCallbacks(
+export async function streamProcessChatWithCallbacks(
   sessionId: string | undefined,
   message: string,
   _options: ChatOptions,
@@ -1375,7 +1375,7 @@ async function streamProcessChatWithCallbacks(
     const args: any = {
       messages: msgArr,
       model,
-      ...(toolsMode === 'none' ? { tools: [] } : (toolsList && toolsList.length ? { tools: toolsList } : {})),
+      ...(toolsMode === 'none' ? { tools: [], tool_choice: 'none' } : (toolsList && toolsList.length ? { tools: toolsList, tool_choice: 'auto' } : {})),
       stream: true,
       chatId,
       options: { createChatIfNeeded: true, chatId, ...(continuation ? { continuation: true } : {}) }
