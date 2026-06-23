@@ -22,6 +22,7 @@ import { UploadLogger, classifyError } from '../utils/index.js';
 import { recordFileFailure, recordFileSkipped, recordFileStart, recordFileSuccess } from '../utils/index.js';
 import { pipeline } from 'stream/promises';
 import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
+import { cliTelemetryHeaders } from '../core/telemetry.js';
 
 const DEFAULT_ALLOWED_EXTENSIONS = new Set([
   '.pdf',
@@ -447,7 +448,7 @@ async function uploadFile(
   }
 
   if (options.skipExisting && fileHash) {
-    const existing = await findExistingDocumentByHash(baseUrl, orgId, userId, apiKey, fileHash, logger);
+    const existing = await findExistingDocumentByHash(baseUrl, orgId, userId, apiKey, fileHash, logger, context);
     if (existing.exists) {
       if (existing.documentId) file.documentId = existing.documentId;
       recordFileSkipped(file);
@@ -492,7 +493,10 @@ async function uploadFile(
       }
 
       const totalBytes = file.size;
-      const headers: Record<string, string> = { ...form.getHeaders() } as any;
+      const headers: Record<string, string> = {
+        ...cliTelemetryHeaders(context.telemetry?.command),
+        ...form.getHeaders()
+      } as any;
       if (useContainer) {
         if (!docWorkerUrl) {
           throw new Error('Missing --doc-worker-url (or KABLEWY_DOC_WORKER_URL) for --use-container');
@@ -601,12 +605,14 @@ async function findExistingDocumentByHash(
   userId: string,
   apiKey: string,
   fileHash: string,
-  logger: UploadLogger
+  logger: UploadLogger,
+  context: CommandContext
 ): Promise<{ exists: boolean; documentId?: string }> {
   try {
     const res = await fetch(`${baseUrl}/v1/documents/${orgId}/users/${userId}/search-by-hash`, {
       method: 'POST',
       headers: {
+        ...cliTelemetryHeaders(context.telemetry?.command),
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json'
       },

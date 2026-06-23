@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import yaml from 'js-yaml';
 import { CommandContext } from '../types/index.js';
 import { isScopedApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
+import { cliTelemetryHeaders } from '../core/telemetry.js';
 
 /**
  * `kablewy login` — get a scoped API key without ever pasting one.
@@ -531,7 +532,7 @@ interface JsonResponse {
 async function postJson(url: string, body: unknown, extraHeaders: Record<string, string> = {}): Promise<JsonResponse> {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...extraHeaders },
+    headers: { ...cliTelemetryHeaders('login'), 'Content-Type': 'application/json', ...extraHeaders },
     body: JSON.stringify(body)
   });
   const text = await res.text();
@@ -547,7 +548,7 @@ async function postJson(url: string, body: unknown, extraHeaders: Record<string,
 async function postForm(url: string, body: URLSearchParams): Promise<JsonResponse> {
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    headers: { ...cliTelemetryHeaders('login'), 'Content-Type': 'application/x-www-form-urlencoded' },
     body: body.toString()
   });
   const text = await res.text();

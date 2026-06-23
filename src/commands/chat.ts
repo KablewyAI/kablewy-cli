@@ -4,8 +4,16 @@ import { ChatTUI } from '../ui/tui-chat.js';
 import React from 'react';
 import { InkChat, runInkChat } from '../ui/ink-chat.js';
 import os from 'os';
+import fs from 'node:fs';
+import path from 'node:path';
 import { CliError, exitCodeFor, writeJsonError, writeJsonSuccess } from '../core/api-client.js';
 import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
+import { cliTelemetryHeaders } from '../core/telemetry.js';
+import {
+  DEFAULT_AGENT_COMMAND_TIMEOUT_MS,
+  DEFAULT_AGENT_MAX_OUTPUT_BYTES,
+  defaultAgentAuditLogPath
+} from '../utils/agent-safety.js';
 
 export function createChatCommand(context: CommandContext): Command {
   const command = new Command('chat');
@@ -28,6 +36,78 @@ export function createChatCommand(context: CommandContext): Command {
     });
 
   return command;
+}
+
+export function createAgentCommand(context: CommandContext): Command {
+  const command = new Command('agent');
+
+  command
+    .description('Start the Kablewy local agent terminal mode (beta)')
+    .option('-s, --session <id>', 'Use existing chat session ID')
+    .option('--system <prompt>', 'Set an additional system prompt for the agent')
+    .option('--model <name>', 'Model name (default: gpt-5.4)', 'gpt-5.4')
+    .option('--tools <json>', 'JSON array of tool names or full tool objects')
+    .option('--tools-json <pathOrJson>', 'Path to JSON file or inline JSON with full tool definitions')
+    .option('--tools-mode <mode>', 'Tool selection mode: exact|none (default: exact when tools provided)', (v: string) => v as any)
+    .option('--cwd <path>', 'Project root for local file reads and shell commands')
+    .option('--shell-timeout-ms <ms>', `Local shell command timeout (default: ${DEFAULT_AGENT_COMMAND_TIMEOUT_MS})`, parsePositiveInt)
+    .option('--max-output-bytes <bytes>', `Max retained stdout/stderr bytes per stream (default: ${DEFAULT_AGENT_MAX_OUTPUT_BYTES})`, parsePositiveInt)
+    .option('--audit-log <path>', 'Write redacted JSONL session audit log to this path')
+    .option('--no-audit-log', 'Disable the local redacted JSONL session audit log')
+    .option('--allow-dangerous-shell', 'Allow dangerous shell patterns after explicit confirmation')
+    .option('--allow-outside-cwd', 'Allow local file attachments and shell commands outside the working directory')
+    .option('--allow-shell-without-confirmation', 'Run ! shell commands immediately instead of asking for approval')
+    .action(async (options: ChatOptions & {
+      allowShellWithoutConfirmation?: boolean;
+      allowDangerousShell?: boolean;
+      allowOutsideCwd?: boolean;
+      cwd?: string;
+      shellTimeoutMs?: number;
+      maxOutputBytes?: number;
+      auditLog?: string | false;
+    }) => {
+      const cwd = resolveAgentCwd(options.cwd);
+      process.chdir(cwd);
+      const auditLogPath = options.auditLog === false
+        ? undefined
+        : typeof options.auditLog === 'string'
+          ? path.resolve(cwd, options.auditLog)
+          : defaultAgentAuditLogPath(cwd);
+      await startInkTuiChat(options.session, {
+        ...(options as any),
+        ui: true,
+        agent: true,
+        requireShellApproval: options.allowShellWithoutConfirmation !== true,
+        agentSafety: {
+          cwd,
+          allowDangerousShell: options.allowDangerousShell === true,
+          allowOutsideCwd: options.allowOutsideCwd === true,
+          requireShellApproval: options.allowShellWithoutConfirmation !== true,
+          commandTimeoutMs: options.shellTimeoutMs ?? DEFAULT_AGENT_COMMAND_TIMEOUT_MS,
+          maxOutputBytes: options.maxOutputBytes ?? DEFAULT_AGENT_MAX_OUTPUT_BYTES,
+          auditLogPath
+        }
+      } as any, context);
+    });
+
+  return command;
+}
+
+function parsePositiveInt(value: string): number {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Expected a positive integer, got "${value}"`);
+  }
+  return parsed;
+}
+
+function resolveAgentCwd(value: string | undefined): string {
+  const cwd = path.resolve(value || process.cwd());
+  const stat = fs.existsSync(cwd) ? fs.statSync(cwd) : null;
+  if (!stat?.isDirectory()) {
+    throw new Error(`Agent cwd is not a directory: ${cwd}`);
+  }
+  return cwd;
 }
 
 async function handleChat(options: ChatOptions, context: CommandContext): Promise<void> {
@@ -194,10 +274,7 @@ async function sendSingleMessage(sessionId: string | undefined, message: string,
 
     const res = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json'
-      },
+      headers: chatRequestHeaders(context, apiKey),
       body: JSON.stringify(body)
     } as any);
 
@@ -320,10 +397,7 @@ async function startInteractiveChat(sessionId: string | undefined, options: Chat
 
         const res = await fetch(url, {
           method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json'
-          },
+          headers: chatRequestHeaders(context, apiKey),
           body: JSON.stringify(body)
         } as any);
 
@@ -383,6 +457,15 @@ function getCoreConfig(context: CommandContext): { apiUrl: string; orgId: string
     userId: cfg?.get ? cfg.get('userId') : process.env.KABLEWY_USER_ID,
     apiKey,
   } as any;
+}
+
+function chatRequestHeaders(context: CommandContext, apiKey: string, acceptEventStream = false): Record<string, string> {
+  return {
+    ...cliTelemetryHeaders(context.telemetry?.command),
+    'Authorization': `Bearer ${apiKey}`,
+    'Content-Type': 'application/json',
+    ...(acceptEventStream ? { 'Accept': 'text/event-stream' } : {})
+  };
 }
 
 function getLocalFsTools(): any[] {
@@ -485,11 +568,7 @@ async function streamProcessChat(sessionId: string | undefined, message: string,
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream'
-    },
+    headers: chatRequestHeaders(context, apiKey, true),
     body: JSON.stringify(body)
   } as any);
 
@@ -605,16 +684,29 @@ async function startInkTuiChat(sessionId: string | undefined, options: ChatOptio
   let liveChatId: string | undefined = sessionId;
 
   const ui = React.createElement(InkChat, {
-    title: 'Kablewy Chat',
+    title: (options as any).agent ? 'Kablewy Agent' : 'Kablewy Chat',
+    mode: (options as any).agent ? 'agent' : 'chat',
     model: (options as any).model || 'gpt-5.4',
-    startStreaming: async (text: string, history: Array<{ role: 'user' | 'assistant'; content: string }>, handlers: { onText: (chunk: string) => void; onTool: (evt: string) => void; onDone: () => void }) => {
+    requireShellApproval: Boolean((options as any).requireShellApproval),
+    safety: (options as any).agentSafety,
+    startStreaming: async (
+      text: string,
+      history: Array<{ role: 'user' | 'assistant'; content: string }>,
+      handlers: { onText: (chunk: string) => void; onTool: (evt: string) => void; onDone: () => void },
+      request?: { model: string }
+    ) => {
       // For each submit, stream with compact history so backend sees prior turns
       const histPrefix = history.flatMap(h => [{ role: h.role, content: h.content }]);
       const sys = (((options as any)?.system as string) || '').trim();
       const systemMsg = sys ? [{ role: 'system', content: sys }] : [] as any[];
       const payload = { role: 'user', content: text } as const;
       const mergedMessage = JSON.stringify({ _compose: true }); // marker not sent
-      await streamProcessChatWithCallbacks(liveChatId, text, { ...(options as any), __history: histPrefix, __systemArray: systemMsg } as any, context, {
+      await streamProcessChatWithCallbacks(liveChatId, text, {
+        ...(options as any),
+        model: request?.model || (options as any).model || 'gpt-5.4',
+        __history: histPrefix,
+        __systemArray: systemMsg
+      } as any, context, {
         onText: (chunk) => handlers.onText(chunk),
         onToolEvent: (evt) => handlers.onTool(evt),
         onChatId: (id: string) => { liveChatId = id; }
@@ -675,12 +767,16 @@ async function streamProcessChatWithCallbacks(
 
   const model = ((_options as any)?.model as string) || 'gpt-5.4';
   const userSystem = ((_options as any)?.system as string) || undefined;
+  const isAgentMode = Boolean((_options as any)?.agent);
   const injectedSystem = [
-    'You are running inside the Kablewy CLI Enhanced TUI.',
+    isAgentMode ? 'You are running inside Kablewy Agent, a beta local terminal agent mode.' : 'You are running inside the Kablewy CLI Enhanced TUI.',
     'Capabilities for this terminal session:',
-    '- Shell: The user can execute shell commands directly by prefixing with !, and may enable autorun. When you propose commands, output them in bash code fences or lines starting with "$ ". Keep them safe and reproducible. Prefer read-only commands by default. Use the project root as the working directory unless stated otherwise.',
+    isAgentMode
+      ? '- Shell: The user can execute shell commands by prefixing with !. Agent mode asks for approval before running local commands unless explicitly disabled. When you propose commands, output them in bash code fences or lines starting with "$ ". Keep them safe and reproducible. Prefer read-only commands by default. Use the current working directory as the project root unless stated otherwise.'
+      : '- Shell: The user can execute shell commands directly by prefixing with !, and may enable autorun. When you propose commands, output them in bash code fences or lines starting with "$ ". Keep them safe and reproducible. Prefer read-only commands by default. Use the project root as the working directory unless stated otherwise.',
     '- File attachments: The user can attach files using @ path. You can assume attached files are included in the hidden context even if the transcript only shows the paths.',
     '- Tools: Only call tools that are explicitly provided in this request (tool_choice=auto). Do not assume local filesystem tools unless listed. Use document tools for Kablewy documents.',
+    isAgentMode ? '- File edits: Do not claim to have edited local files unless the user ran a command that did so. Prefer proposing clear unified diffs or exact commands for the user to approve.' : '',
     'Guidelines:',
     '- When the user asks for a command, provide one or more exact commands in a bash code fence and optionally a 1–2 line note.',
     '- For searches, prefer ripgrep (rg) with sensible flags (e.g., rg -n -S "pattern" src/). If rg is unavailable, fall back to grep -rn.',
@@ -724,11 +820,7 @@ async function streamProcessChatWithCallbacks(
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-      'Accept': 'text/event-stream'
-    },
+    headers: chatRequestHeaders(context, apiKey, true),
     body: JSON.stringify(body)
   } as any);
 

@@ -5,6 +5,27 @@ All notable changes to `@kablewy/cli` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] - 2026-06-23
+
+### Added
+
+- **Agent** — Added `kablewy agent`, a beta local terminal agent mode for
+  Kablewy-powered project inspection, model-switched terminal sessions, local
+  file attachments with `@ path`, and approval-gated shell commands.
+- **Agent safety** — Added command risk classification, cwd boundary checks,
+  shell timeouts, retained-output caps, redacted local JSONL audit logs, and
+  explicit escape hatches for outside-cwd, dangerous-shell, and no-confirmation
+  sessions.
+- **Privacy-safe CLI telemetry** — Added Kablewy API request metadata for
+  package version and command family only, with `KABLEWY_DISABLE_TELEMETRY=1`
+  as an opt-out. Prompts, paths, shell commands, outputs, environment variables,
+  and credentials are not sent as telemetry.
+
+### Changed
+
+- **TUI chat** — `/model <name>` now changes the model used for future TUI
+  requests instead of only displaying a banner.
+
 ## [0.1.4] - 2026-06-16
 
 ### Changed
@@ -83,6 +104,7 @@ web-app parity.
 - **Secret redaction** — bearer tokens, refresh tokens, API keys, cookies,
   and authorization headers are redacted in human output and diagnostics.
 
+[0.1.5]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.5
 [0.1.4]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.4
 [0.1.3]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.3
 [0.1.2]: https://github.com/KablewyAI/kablewy-cli/releases/tag/v0.1.2

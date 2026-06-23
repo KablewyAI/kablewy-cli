@@ -5,7 +5,7 @@ import { CLI_VERSION } from '../core/version.js';
 import { createLoginCommand } from './login.js';
 import { createUploadCommand } from './upload.js';
 import { createDocsCommand } from './docs.js';
-import { createChatCommand } from './chat.js';
+import { createAgentCommand, createChatCommand } from './chat.js';
 import { createConfigCommand } from './config.js';
 import { createStatusCommand } from './status.js';
 import { createToolsCommand } from './tools.js';
@@ -109,6 +109,17 @@ export class CommandRegistry {
           'kablewy chat --session my-project'
         ],
         createCommand: createChatCommand
+      },
+      {
+        name: 'agent',
+        description: 'Start the Kablewy local agent terminal mode (beta)',
+        version: CLI_VERSION,
+        examples: [
+          'kablewy agent',
+          'kablewy agent --model gpt-5.4',
+          'kablewy agent --tools \'["customer_lookup"]\''
+        ],
+        createCommand: createAgentCommand
       },
       {
         name: 'config',

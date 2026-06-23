@@ -169,6 +169,9 @@ export interface CommandContext {
   mcpClient: MCPClient;
   output: OutputHandler;
   input: InputHandler;
+  telemetry?: {
+    command?: string;
+  };
 }
 
 export interface OutputHandler {

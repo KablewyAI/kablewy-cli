@@ -19,6 +19,7 @@ kablewy login                                       # sign in, store a scoped AP
 kablewy docs upload ./documents/*.pdf               # upload documents
 kablewy docs search "renewal terms"                 # search the knowledge base
 kablewy chat --message "Summarize the renewal risk" # one-shot chat with context
+kablewy agent                                       # beta local terminal agent mode
 ```
 
 Add `--json` to any automation-capable command when its output feeds another script:
@@ -85,7 +86,15 @@ Human output and verbose diagnostics redact bearer tokens, refresh tokens, API k
 
 ## Security boundary
 
-The CLI is a Node.js program that runs on your machine with your user's filesystem and network permissions. It is not a sandbox and does not run inside Wasm. Treat file uploads, local config, shell history, external MCP headers, and any local MCP process you configure as part of your own trusted environment. Hosted skill and MCP execution runs on Kablewy's platform; the CLI only packages, configures, and invokes those platform surfaces.
+The CLI is a Node.js program that runs on your machine with your user's filesystem and network permissions. It is not a sandbox and does not run inside Wasm. Treat file uploads, local config, shell history, external MCP headers, and any local MCP process you configure as part of your own trusted environment. `kablewy agent` includes a local safety harness: command approval by default, command risk classification, working-directory boundaries, command timeouts, output caps, redacted audit logs, and explicit escape hatches. Approved commands still run with your normal local permissions. Hosted skill and MCP execution runs on Kablewy's platform; the CLI only packages, configures, and invokes those platform surfaces.
+
+## Privacy-safe reliability telemetry
+
+Kablewy API requests include minimal CLI metadata for support and product reliability: the package version, `cli` as the client type, and the command family such as `docs.upload`, `chat`, or `agent`. The same command family is included in the `User-Agent` so Kablewy support can find CLI traffic in Cloudflare logs by request ID, version, and command surface.
+
+The CLI does **not** send prompts, document contents, file paths, shell commands, stdout/stderr, environment variables, local audit logs, API keys, bearer tokens, cookies, or MCP auth headers as telemetry. To omit the Kablewy-specific client metadata entirely, set `KABLEWY_DISABLE_TELEMETRY=1`.
+
+External MCP servers configured through `kablewy mcp connect` do not receive Kablewy telemetry headers. The CLI only adds those headers to Kablewy API/MCP endpoints.
 
 ## Status
 
@@ -155,6 +164,43 @@ kablewy chat --message "Use the customer lookup tool" --tools '["customer_lookup
 kablewy chat --message "Use these tool definitions" --tools-json ./tools.json
 kablewy chat --message "Stream the answer" --stream
 ```
+
+## Agent
+
+`kablewy agent` starts a beta local terminal agent mode. It is useful for project inspection, approved shell commands, local file attachments, Kablewy context, and model-switched terminal sessions. It is not intended to be full Claude Code parity in `0.1.x`.
+
+```bash
+kablewy agent
+kablewy agent --model gpt-5.4
+kablewy agent --cwd ~/projects/acme-renewal
+kablewy agent --tools '["customer_lookup"]'
+```
+
+Inside the agent:
+
+```text
+@ src/index.ts              attach a local file to the next message
+! npm test                  propose a local shell command; approval is required
+/model gpt-5.4              switch the model for future turns
+/help                       show agent controls
+```
+
+By default, shell commands require an explicit `y` confirmation before they run. Use `--allow-shell-without-confirmation` only in trusted local sessions where immediate `!` command execution is expected.
+
+Local safety options:
+
+```bash
+kablewy agent --cwd ./project                         # set the agent root
+kablewy agent --shell-timeout-ms 120000               # default command timeout
+kablewy agent --max-output-bytes 262144               # retained stdout/stderr cap per stream
+kablewy agent --audit-log .kablewy/session.jsonl      # redacted JSONL audit log path
+kablewy agent --no-audit-log                          # disable local audit logging
+kablewy agent --allow-outside-cwd                     # allow attachments/commands outside cwd
+kablewy agent --allow-dangerous-shell                 # allow dangerous commands after confirmation
+kablewy agent --allow-shell-without-confirmation      # trusted sessions only
+```
+
+Dangerous shell patterns such as `sudo`, `rm -rf`, `git reset --hard`, `git clean -fd`, `curl | sh`, recursive permission changes, and disk/system commands are blocked unless `--allow-dangerous-shell` is set. Commands that appear to leave the agent root are blocked unless `--allow-outside-cwd` is set.
 
 ## Tools
 
@@ -331,7 +377,7 @@ kablewy docs list --json
 
 ## Public beta scope
 
-`0.1.x` is a public beta for deterministic client workflows, not full web-app parity. The public command surface is: `login` / `logout` / `whoami`, `auth keys list|revoke`, `docs upload|list|search|get|delete|status` (with top-level `upload` alias), `chat`, `tools`, `mcp`, `quick-actions`, `webhooks`, `skills` (with `skill` alias), `config`, and `status`.
+`0.1.x` is a public beta for deterministic client workflows, not full web-app parity. The public command surface is: `login` / `logout` / `whoami`, `auth keys list|revoke`, `docs upload|list|search|get|delete|status` (with top-level `upload` alias), `chat`, `agent`, `tools`, `mcp`, `quick-actions`, `webhooks`, `skills` (with `skill` alias), `config`, and `status`.
 
 The first beta intentionally does not expose plugin management, graph exploration, workcells, image/video generation, queue/log inspection, full workflow-job authoring, or admin command groups. OAuth entry for MCP catalog templates remains app-led in `0.1.x`.
 
