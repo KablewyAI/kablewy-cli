@@ -10,6 +10,7 @@ import { CommandRegistry } from './commands/registry.js';
 import { CommandContext } from './types/index.js';
 import { applyGlobalOptions } from './core/global-options.js';
 import { cliTelemetryHeaders, commandPathForTelemetry } from './core/telemetry.js';
+import { maybeShowUpdateNotice } from './core/update-notifier.js';
 import chalk from 'chalk';
 import { createRequire } from 'module';
 
@@ -61,6 +62,10 @@ async function main() {
       // after applying them. Otherwise `kablewy --api-key ... tools list` would
       // still use the client initialized from the persisted config.
       context.mcpClient = new KablewyMCPClient(resolveMcpServersForCommand(config, context.telemetry.command));
+    });
+
+    program.hook('postAction', async (_thisCommand, actionCommand) => {
+      await maybeShowUpdateNotice(config, { command: actionCommand });
     });
     
     // Handle errors

@@ -34,6 +34,16 @@ kablewy chat --message "Return the top three open questions" --json
 
 Node.js `>= 18`. macOS and Linux are supported; **Windows is not yet tested**.
 
+## Updates
+
+The CLI never auto-updates itself. In interactive terminals, it may check npm at most once per day and print a short notice when a newer version is available.
+
+```bash
+npm install -g @kablewy/cli@latest
+```
+
+Set `KABLEWY_DISABLE_UPDATE_CHECK=1` to disable update checks. Notices are suppressed in CI, non-interactive output, and JSON mode.
+
 ## Authentication
 
 `kablewy login` signs you in and stores a scoped API key for CLI use. If an existing Kablewy desktop session is available, the CLI can reuse it. Otherwise it opens Kablewy in your browser, uses your normal web login/SSO/MFA session, and returns a one-time OAuth code to the CLI through a local loopback callback.

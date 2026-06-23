@@ -8,6 +8,7 @@ export interface KablewyConfig {
   apiKeyExpiresAt?: string;
   docWorkerUrl?: string;
   docProcessorToken?: string;
+  updateCheckLastAt?: string;
   concurrency: number;
   retryAttempts: number;
   retryDelay: number;
