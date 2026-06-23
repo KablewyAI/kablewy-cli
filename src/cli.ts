@@ -9,6 +9,7 @@ import { CLIInputHandler } from './ui/input.js';
 import { CommandRegistry } from './commands/registry.js';
 import { CommandContext } from './types/index.js';
 import { applyGlobalOptions } from './core/global-options.js';
+import { cliTelemetryHeaders, commandPathForTelemetry } from './core/telemetry.js';
 import chalk from 'chalk';
 import { createRequire } from 'module';
 
@@ -33,14 +34,15 @@ async function main() {
     const input = new CLIInputHandler();
     
     // Initialize MCP client with resolved (placeholder-replaced) server configs
-    const mcpClient = new KablewyMCPClient(config.getResolvedMCPServers());
+    const mcpClient = new KablewyMCPClient(resolveMcpServersForCommand(config));
     
     // Create command context
     const context: CommandContext = {
       config: config as any,
       mcpClient,
       output,
-      input
+      input,
+      telemetry: {}
     };
     
     // Create command registry
@@ -50,12 +52,15 @@ async function main() {
     const program = registry.createProgram();
     
     // Handle global options
-    program.hook('preAction', (thisCommand) => {
+    program.hook('preAction', (thisCommand, actionCommand) => {
       applyGlobalOptions(thisCommand.opts(), config);
+      context.telemetry = {
+        command: commandPathForTelemetry(actionCommand)
+      };
       // Global flags are one-shot runtime overrides, so rebuild the MCP client
       // after applying them. Otherwise `kablewy --api-key ... tools list` would
       // still use the client initialized from the persisted config.
-      context.mcpClient = new KablewyMCPClient(config.getResolvedMCPServers());
+      context.mcpClient = new KablewyMCPClient(resolveMcpServersForCommand(config, context.telemetry.command));
     });
     
     // Handle errors
@@ -86,3 +91,20 @@ main().catch((error: any) => {
   }
   process.exit(1);
 });
+
+function resolveMcpServersForCommand(config: ConfigManager, command?: string) {
+  const servers = config.getResolvedMCPServers();
+  const apiUrl = String(config.get('apiUrl') || '').replace(/\/+$/, '');
+  const telemetryHeaders = cliTelemetryHeaders(command);
+  if (!apiUrl || Object.keys(telemetryHeaders).length === 0) return servers;
+
+  for (const server of Object.values(servers)) {
+    const endpoint = server.httpUrl || server.url || '';
+    if (!endpoint.startsWith(`${apiUrl}/v1/mcp-jsonrpc/`)) continue;
+    server.headers = {
+      ...telemetryHeaders,
+      ...(server.headers || {})
+    };
+  }
+  return servers;
+}

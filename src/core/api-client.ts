@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { CommandContext } from '../types/index.js';
 import { redactSecrets } from '../utils/redact.js';
 import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from './credentials.js';
+import { cliTelemetryHeaders } from './telemetry.js';
 
 export type ApiErrorCode =
   | 'USAGE_ERROR'
@@ -102,7 +103,7 @@ export function exitCodeFor(error: unknown): number {
 }
 
 export class KablewyApiClient {
-  constructor(private readonly config: CoreApiConfig) {}
+  constructor(private readonly config: CoreApiConfig, private readonly telemetryCommand?: string) {}
 
   async request<T = unknown>(
     method: string,
@@ -120,6 +121,7 @@ export class KablewyApiClient {
       res = await fetch(url, {
         method,
         headers: {
+          ...cliTelemetryHeaders(this.telemetryCommand),
           Authorization: `Bearer ${this.config.apiKey}`,
           'Content-Type': 'application/json',
           'x-request-id': requestId,
@@ -141,7 +143,7 @@ export class KablewyApiClient {
 }
 
 export function createApiClient(context: CommandContext): KablewyApiClient {
-  return new KablewyApiClient(requireCoreApiConfig(context));
+  return new KablewyApiClient(requireCoreApiConfig(context), context.telemetry?.command);
 }
 
 async function parseResponseBody(res: Response): Promise<unknown> {

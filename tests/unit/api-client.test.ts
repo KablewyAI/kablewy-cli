@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { CliError, errorEnvelope, exitCodeFor, requireCoreApiConfig, successEnvelope, writeJsonSuccess } from '../../src/core/api-client.js';
+import { CliError, errorEnvelope, exitCodeFor, KablewyApiClient, requireCoreApiConfig, successEnvelope, writeJsonSuccess } from '../../src/core/api-client.js';
 import { maskSecret, redactSecrets } from '../../src/utils/redact.js';
 import { CommandContext } from '../../src/types/index.js';
 
@@ -81,6 +81,38 @@ describe('API client configuration', () => {
   it('rejects session-shaped tokens before REST commands can use them', () => {
     expect(() => requireCoreApiConfig(contextWithApiKey('eyJhbGciOi.fake.jwt'))).toThrow(CliError);
     expect(() => requireCoreApiConfig(contextWithApiKey('eyJhbGciOi.fake.jwt'))).toThrow(/starting with "api_"/);
+  });
+});
+
+describe('API client telemetry headers', () => {
+  const originalDisable = process.env.KABLEWY_DISABLE_TELEMETRY;
+
+  afterEach(() => {
+    if (originalDisable === undefined) delete process.env.KABLEWY_DISABLE_TELEMETRY;
+    else process.env.KABLEWY_DISABLE_TELEMETRY = originalDisable;
+    vi.unstubAllGlobals();
+  });
+
+  it('adds privacy-safe CLI metadata to API requests', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const client = new KablewyApiClient({
+      baseUrl: 'https://kablewy.ai',
+      orgId: 'org-1',
+      userId: 'user-1',
+      apiKey: 'api_test_key'
+    }, 'docs.list');
+
+    await client.request('GET', '/v1/test');
+
+    expect(fetchMock).toHaveBeenCalledWith(new URL('https://kablewy.ai/v1/test'), expect.objectContaining({
+      headers: expect.objectContaining({
+        Authorization: 'Bearer api_test_key',
+        'X-Kablewy-Client': 'cli',
+        'X-Kablewy-CLI-Command': 'docs.list'
+      })
+    }));
   });
 });
 

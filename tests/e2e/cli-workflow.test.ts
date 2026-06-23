@@ -98,7 +98,7 @@ describe.skipIf(!cliBuilt)('CLI End-to-End Workflow Tests', () => {
 
       expect(code).toBe(0);
       for (const cmd of [
-        'docs', 'upload', 'chat', 'config', 'status', 'tools', 'mcp',
+        'docs', 'upload', 'chat', 'agent', 'config', 'status', 'tools', 'mcp',
         'quick-actions', 'webhooks', 'skills', 'skill', 'auth', 'logout',
         'whoami', 'login'
       ]) {
@@ -241,6 +241,21 @@ describe.skipIf(!cliBuilt)('CLI End-to-End Workflow Tests', () => {
       expect(code).toBe(0);
       expect(stdout).toContain('Upload documents');
       expect(stdout).toContain('Options:');
+    });
+
+    it('should show agent help', async () => {
+      const { code, stdout } = await runCli(['agent', '--help']);
+
+      expect(code).toBe(0);
+      expect(stdout).toContain('Kablewy local agent');
+      expect(stdout).toContain('--model');
+      expect(stdout).toContain('--cwd');
+      expect(stdout).toContain('--shell-timeout-ms');
+      expect(stdout).toContain('--max-output-bytes');
+      expect(stdout).toContain('--audit-log');
+      expect(stdout).toContain('--allow-dangerous-shell');
+      expect(stdout).toContain('--allow-outside-cwd');
+      expect(stdout).toContain('--allow-shell-without-confirmation');
     });
   });
 });

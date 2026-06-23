@@ -32,7 +32,7 @@ describe('Command Integration Tests', () => {
       
       const expectedCommands = [
         'login', 'logout', 'whoami', 'auth', 'docs', 'upload',
-        'chat', 'config', 'status', 'tools', 'mcp', 'quick-actions', 'webhooks', 'skills', 'skill'
+        'chat', 'agent', 'config', 'status', 'tools', 'mcp', 'quick-actions', 'webhooks', 'skills', 'skill'
       ];
       
       expectedCommands.forEach(commandName => {
@@ -211,6 +211,33 @@ describe('Command Integration Tests', () => {
       expect(optionNames).not.toContain('--title');
       expect(optionNames).not.toContain('--context');
       expect(optionNames).not.toContain('--status');
+    });
+  });
+
+  describe('Agent Command Integration', () => {
+    it('should create agent command with local-agent options', () => {
+      const agentCommand = registry.getCommand('agent');
+      expect(agentCommand).toBeDefined();
+
+      const command = agentCommand!.createCommand(context);
+      expect(command.name()).toBe('agent');
+      expect(command.description()).toContain('local agent');
+
+      const optionNames = command.options.map(opt => opt.long);
+      expect(optionNames).toContain('--session');
+      expect(optionNames).toContain('--model');
+      expect(optionNames).toContain('--system');
+      expect(optionNames).toContain('--tools');
+      expect(optionNames).toContain('--tools-json');
+      expect(optionNames).toContain('--tools-mode');
+      expect(optionNames).toContain('--cwd');
+      expect(optionNames).toContain('--shell-timeout-ms');
+      expect(optionNames).toContain('--max-output-bytes');
+      expect(optionNames).toContain('--audit-log');
+      expect(optionNames).toContain('--no-audit-log');
+      expect(optionNames).toContain('--allow-dangerous-shell');
+      expect(optionNames).toContain('--allow-outside-cwd');
+      expect(optionNames).toContain('--allow-shell-without-confirmation');
     });
   });
 

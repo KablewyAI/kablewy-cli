@@ -2,6 +2,7 @@ import { Command } from 'commander';
 import { CommandContext, StatusOptions, MCPToolProperty } from '../types/index.js';
 import { CliError, exitCodeFor, writeJsonError, writeJsonSuccess } from '../core/api-client.js';
 import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
+import { cliTelemetryHeaders } from '../core/telemetry.js';
 
 type HealthState = 'healthy' | 'warning' | 'unhealthy';
 
@@ -135,7 +136,10 @@ async function runHealthChecks(context: CommandContext): Promise<{ results: Heal
   const base = String(configData.apiUrl || '').replace(/\/+$/, '');
   let backendUp = false;
   try {
-    const res = await fetch(`${base}/v1/public/health`, { method: 'GET' });
+    const res = await fetch(`${base}/v1/public/health`, {
+      method: 'GET',
+      headers: cliTelemetryHeaders(context.telemetry?.command)
+    });
     backendUp = res.ok;
     results.push({
       name: 'Backend',
@@ -152,7 +156,7 @@ async function runHealthChecks(context: CommandContext): Promise<{ results: Heal
   const apiKey = normalizeApiKey(configData.apiKey || '');
   const orgId = String(configData.orgId || '');
   const userId = String(configData.userId || '');
-  const probe = await probeCredential(base, orgId, userId, apiKey);
+  const probe = await probeCredential(base, orgId, userId, apiKey, context);
 
   results.push({
     name: 'Credential',
@@ -180,7 +184,7 @@ interface CredentialProbe {
 }
 
 /** Direct authed JSON-RPC tools/list probe that surfaces HTTP status (200/401/403/network). */
-async function probeCredential(base: string, orgId: string, userId: string, apiKey: string): Promise<CredentialProbe> {
+async function probeCredential(base: string, orgId: string, userId: string, apiKey: string, context: CommandContext): Promise<CredentialProbe> {
   if (!apiKey) {
     return { state: 'unauthorized', toolCount: 0, detail: 'no API key configured — run `kablewy login`' };
   }
@@ -192,7 +196,11 @@ async function probeCredential(base: string, orgId: string, userId: string, apiK
   try {
     res = await fetch(url, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      headers: {
+        ...cliTelemetryHeaders(context.telemetry?.command),
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
       body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} })
     });
   } catch (error: unknown) {

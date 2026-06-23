@@ -7,6 +7,7 @@ import FormData from 'form-data';
 import { request } from 'undici';
 import { writeJsonSuccess } from '../core/api-client.js';
 import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
+import { cliTelemetryHeaders } from '../core/telemetry.js';
 
 export function createSkillCommand(context: CommandContext, commandName = 'skill'): Command {
   const command = new Command(commandName);
@@ -152,6 +153,14 @@ function validateConfig(config: ReturnType<typeof getSkillApiConfig>, output: Co
   return true;
 }
 
+function skillJsonHeaders(config: ReturnType<typeof getSkillApiConfig>, context: CommandContext): Record<string, string> {
+  return {
+    ...cliTelemetryHeaders(context.telemetry?.command),
+    'Authorization': `Bearer ${config.apiKey}`,
+    'Content-Type': 'application/json'
+  };
+}
+
 // Documented exit-code table: 65 auth, 77 permission, 66 not found,
 // 70 network/backend, 2 usage, 1 anything else.
 function exitCodeForStatus(status: number): number {
@@ -231,10 +240,7 @@ async function handleSkillList(options: SkillOptions, context: CommandContext): 
 
     const res = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json'
-      }
+      headers: skillJsonHeaders(config, context)
     });
 
     const body = await res.json().catch(() => ({}));
@@ -301,10 +307,7 @@ async function handleSkillShow(skillId: string, options: SkillOptions, context: 
 
     const res = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json'
-      }
+      headers: skillJsonHeaders(config, context)
     });
 
     const body = await res.json().catch(() => ({}));
@@ -390,10 +393,7 @@ ${skillDescription}
 
     const res = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json'
-      },
+      headers: skillJsonHeaders(config, context),
       body: JSON.stringify(payload)
     });
 
@@ -466,6 +466,7 @@ async function handleSkillUpload(skillId: string, zipPath: string, options: Skil
     const spinner = output.spinner(`Uploading ${basename(zipPath)}...`);
 
     const headers: Record<string, string> = {
+      ...cliTelemetryHeaders(context.telemetry?.command),
       'Authorization': `Bearer ${config.apiKey}`,
       ...form.getHeaders() as Record<string, string>
     };
@@ -568,10 +569,7 @@ async function handleSkillExecute(skillId: string, options: SkillOptions, contex
       const detailsUrl = `${config.baseUrl}/v1/skills/${config.orgId}/users/${config.userId}/${skillId}`;
       const detailsRes = await fetch(detailsUrl, {
         method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${config.apiKey}`,
-          'Content-Type': 'application/json'
-        }
+        headers: skillJsonHeaders(config, context)
       });
 
       if (detailsRes.ok) {
@@ -662,10 +660,7 @@ async function handleSkillExecute(skillId: string, options: SkillOptions, contex
 
     const res = await fetch(url, {
       method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json'
-      },
+      headers: skillJsonHeaders(config, context),
       body: JSON.stringify(payload)
     });
 
@@ -729,10 +724,7 @@ async function handleSkillVersions(skillId: string, options: SkillOptions, conte
 
     const res = await fetch(url, {
       method: 'GET',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json'
-      }
+      headers: skillJsonHeaders(config, context)
     });
 
     const body = await res.json().catch(() => ({}));
@@ -800,10 +792,7 @@ async function handleSkillDelete(skillId: string, options: SkillOptions, context
 
     const res = await fetch(url, {
       method: 'DELETE',
-      headers: {
-        'Authorization': `Bearer ${config.apiKey}`,
-        'Content-Type': 'application/json'
-      }
+      headers: skillJsonHeaders(config, context)
     });
 
     const body = await res.json().catch(() => ({}));

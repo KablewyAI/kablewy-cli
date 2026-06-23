@@ -28,6 +28,7 @@ describe('public package and README contract', () => {
       'kablewy docs delete <documentId> --yes',
       'kablewy docs status <documentId>',
       'kablewy chat',
+      'kablewy agent',
       'kablewy tools list',
       'kablewy mcp list',
       'kablewy quick-actions list',
@@ -54,6 +55,15 @@ describe('public package and README contract', () => {
     expect(readme).toContain('--event automation_job.completed');
     expect(readme).not.toContain('--event workflow_job.completed');
     expect(readme).toContain('webhook-enabled Automation Job');
+  });
+
+  it('documents the privacy-safe telemetry boundary', () => {
+    expect(readme).toContain('Privacy-safe reliability telemetry');
+    expect(readme).toContain('KABLEWY_DISABLE_TELEMETRY=1');
+    expect(readme).toContain('does **not** send prompts');
+    expect(readme).toContain('file paths');
+    expect(readme).toContain('shell commands');
+    expect(readme).toContain('External MCP servers');
   });
 
   it('documents the actual chat default model', () => {
