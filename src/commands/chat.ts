@@ -1,4 +1,5 @@
 import { Command } from 'commander';
+import { randomUUID } from 'node:crypto';
 import { CommandContext, MCPMessage, ChatOptions } from '../types/index.js';
 import { ChatTUI } from '../ui/tui-chat.js';
 import React from 'react';
@@ -206,13 +207,14 @@ async function resolveToolsOption(toolsOpt: unknown, toolsJsonOpt: unknown): Pro
 
 async function sendSingleMessage(sessionId: string | undefined, message: string, options: ChatOptions, context: CommandContext): Promise<void> {
   const { output, mcpClient } = context;
+  const chatId = ensureChatId(sessionId);
   
   try {
     if (!options.json) {
       output.info(`Sending message: "${message}"`);
     }
     if ((options as any).stream) {
-      const text = await streamProcessChat(sessionId, message, options, context);
+      const text = await streamProcessChat(chatId, message, options, context);
       if (options.json) {
         writeJsonSuccess(context, { response: text });
       } else {
@@ -261,8 +263,8 @@ async function sendSingleMessage(sessionId: string | undefined, message: string,
       messages: messagesArr,
       model,
       ...(toolsList && toolsList.length ? { tools: toolsList, tool_choice: 'auto' } : {}),
-      options: { createChatIfNeeded: true, ...(sessionId ? { chatId: sessionId } : {}) },
-      ...(sessionId ? { chatId: sessionId } : {})
+      options: { createChatIfNeeded: true, chatId },
+      chatId
     };
 
     const body = {
@@ -313,10 +315,11 @@ async function sendSingleMessage(sessionId: string | undefined, message: string,
 
 async function startInteractiveChat(sessionId: string | undefined, options: ChatOptions, context: CommandContext): Promise<void> {
   const { output, input, mcpClient } = context;
+  const chatId = ensureChatId(sessionId);
   
   output.section('Interactive Chat Mode');
   output.info('Type your messages below. Use /help for commands, /exit to quit.');
-  output.info(`Session ID: ${sessionId || 'auto-generated'}`);
+  output.info(`Session ID: ${chatId}`);
   
   const messages: MCPMessage[] = [];
   
@@ -327,7 +330,7 @@ async function startInteractiveChat(sessionId: string | undefined, options: Chat
       
       // Handle special commands
       if (userInput.startsWith('/')) {
-        const handled = await handleChatCommand(userInput, sessionId || '', options, context);
+        const handled = await handleChatCommand(userInput, chatId, options, context);
         if (!handled) {
           sessionActive = false;
         }
@@ -347,7 +350,7 @@ async function startInteractiveChat(sessionId: string | undefined, options: Chat
       
       if ((options as any).stream) {
         // Stream the response over MCP HTTP (SSE)
-        const streamed = await streamProcessChat(sessionId, userInput, options, context);
+        const streamed = await streamProcessChat(chatId, userInput, options, context);
         messages.push({ role: 'assistant', content: streamed || '', toolCalls: [], toolResults: [] });
       } else {
         // Get complete response
@@ -384,8 +387,8 @@ async function startInteractiveChat(sessionId: string | undefined, options: Chat
           messages: msgArr,
           model,
           ...(toolsList ? { tools: toolsList, tool_choice: 'auto' } : {}),
-          options: { createChatIfNeeded: true, ...(sessionId ? { chatId: sessionId } : {}) },
-          ...(sessionId ? { chatId: sessionId } : {})
+          options: { createChatIfNeeded: true, chatId },
+          chatId
         };
 
         const body = {
@@ -528,7 +531,43 @@ function getLocalFsTools(): any[] {
   ];
 }
 
+function ensureChatId(sessionId: string | undefined): string {
+  const trimmed = typeof sessionId === 'string' ? sessionId.trim() : '';
+  return trimmed || randomUUID();
+}
+
+async function buildStreamHttpError(res: Response): Promise<Error> {
+  const requestIdText = formatResponseRequestId(res);
+  const text = await res.text().catch(() => '');
+  const detail = streamErrorDetail(text);
+  return new Error(`Stream request failed (${res.status})${detail ? `: ${detail}` : ''}${requestIdText}`);
+}
+
+function formatResponseRequestId(res: Response): string {
+  const requestId = res.headers.get('x-request-id') || res.headers.get('cf-ray');
+  return requestId ? ` (requestId: ${requestId})` : '';
+}
+
+function streamErrorDetail(text: string): string {
+  const trimmed = text.trim();
+  if (!trimmed) return '';
+  try {
+    const parsed = JSON.parse(trimmed);
+    const message =
+      parsed?.error?.message ||
+      parsed?.message ||
+      parsed?.error ||
+      parsed?.detail ||
+      parsed?.details;
+    if (typeof message === 'string') return message;
+    return JSON.stringify(parsed).slice(0, 500);
+  } catch {
+    return trimmed.slice(0, 500);
+  }
+}
+
 async function streamProcessChat(sessionId: string | undefined, message: string, _options: ChatOptions, context: CommandContext): Promise<string> {
+  const chatId = ensureChatId(sessionId);
   const { apiUrl, orgId, userId, apiKey } = getCoreConfig(context);
   const missing: string[] = [];
   if (!apiUrl) missing.push('apiUrl');
@@ -555,8 +594,8 @@ async function streamProcessChat(sessionId: string | undefined, message: string,
     model,
     ...(toolsList && toolsList.length ? { tools: toolsList, tool_choice: 'auto' } : {}),
     stream: true,
-    ...(sessionId ? { chatId: sessionId } : {}),
-    options: { createChatIfNeeded: true, ...(sessionId ? { chatId: sessionId } : {}) }
+    chatId,
+    options: { createChatIfNeeded: true, chatId }
   };
 
   const body = {
@@ -572,8 +611,11 @@ async function streamProcessChat(sessionId: string | undefined, message: string,
     body: JSON.stringify(body)
   } as any);
 
-  if (!res.ok || !res.body) {
-    throw new Error(`Stream request failed (${res.status})`);
+  if (!res.ok) {
+    throw await buildStreamHttpError(res);
+  }
+  if (!res.body) {
+    throw new Error(`Stream request failed (${res.status}): response body was empty${formatResponseRequestId(res)}`);
   }
 
   const reader = (res.body as any).getReader?.();
@@ -646,12 +688,13 @@ async function streamProcessChat(sessionId: string | undefined, message: string,
 }
 
 async function startTuiChat(sessionId: string | undefined, options: ChatOptions, context: CommandContext): Promise<void> {
+  const chatId = ensureChatId(sessionId);
   const tui = new ChatTUI({
     onSubmit: async (text: string) => {
       try {
         // Phase: Thinking
         tui.setStatusPhase('Thinking');
-        await streamProcessChatWithCallbacks(sessionId, text, options, context, {
+        await streamProcessChatWithCallbacks(chatId, text, options, context, {
           onText: (chunk) => {
             tui.setStatusPhase('Generating');
             // Do not print status label on every chunk; only first entry triggers phase update
@@ -681,7 +724,7 @@ async function startInkTuiChat(sessionId: string | undefined, options: ChatOptio
   // Bridge: convert our existing streaming logic into async generators for Ink
   const streamController = createAsyncGenerator<string>();
   const toolController = createAsyncGenerator<string>();
-  let liveChatId: string | undefined = sessionId;
+  let liveChatId: string | undefined = ensureChatId(sessionId);
 
   const ui = React.createElement(InkChat, {
     title: (options as any).agent ? 'Kablewy Agent' : 'Kablewy Chat',
@@ -753,6 +796,7 @@ async function streamProcessChatWithCallbacks(
   context: CommandContext,
   cb: { onText: (chunk: string) => void; onToolEvent: (text: string) => void; onChatId?: (id: string) => void }
 ): Promise<string> {
+  const chatId = ensureChatId(sessionId);
   const { apiUrl, orgId, userId, apiKey } = getCoreConfig(context);
   const missing: string[] = [];
   if (!apiUrl) missing.push('apiUrl');
@@ -807,8 +851,8 @@ async function streamProcessChatWithCallbacks(
     model,
     ...(toolsMode === 'none' ? { tools: [] } : (toolsList && toolsList.length ? { tools: toolsList } : {})),
     stream: true,
-    ...(sessionId ? { chatId: sessionId } : {}),
-    options: { createChatIfNeeded: true, ...(sessionId ? { chatId: sessionId } : {}) }
+    chatId,
+    options: { createChatIfNeeded: true, chatId }
   };
 
   const body = {
@@ -824,8 +868,11 @@ async function streamProcessChatWithCallbacks(
     body: JSON.stringify(body)
   } as any);
 
-  if (!res.ok || !res.body) {
-    throw new Error(`Stream request failed (${res.status})`);
+  if (!res.ok) {
+    throw await buildStreamHttpError(res);
+  }
+  if (!res.body) {
+    throw new Error(`Stream request failed (${res.status}): response body was empty${formatResponseRequestId(res)}`);
   }
 
   const reader = (res.body as any).getReader?.();
