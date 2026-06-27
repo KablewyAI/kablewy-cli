@@ -334,6 +334,8 @@ describe.skipIf(!cliBuilt)('CLI End-to-End Workflow Tests', () => {
       expect(stdout).toContain('--shell-timeout-ms');
       expect(stdout).toContain('--max-output-bytes');
       expect(stdout).toContain('--audit-log');
+      expect(stdout).toContain('--self-test');
+      expect(stdout).toContain('--json');
       expect(stdout).toContain('--allow-dangerous-shell');
       expect(stdout).toContain('--allow-outside-cwd');
       expect(stdout).toContain('--allow-shell-without-confirmation');

@@ -235,6 +235,8 @@ describe('Command Integration Tests', () => {
       expect(optionNames).toContain('--max-output-bytes');
       expect(optionNames).toContain('--audit-log');
       expect(optionNames).toContain('--no-audit-log');
+      expect(optionNames).toContain('--self-test');
+      expect(optionNames).toContain('--json');
       expect(optionNames).toContain('--allow-dangerous-shell');
       expect(optionNames).toContain('--allow-outside-cwd');
       expect(optionNames).toContain('--allow-shell-without-confirmation');

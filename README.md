@@ -183,6 +183,7 @@ kablewy chat --message "Stream the answer" --stream
 kablewy agent
 kablewy agent --model gpt-5.4
 kablewy agent --cwd ~/projects/acme-renewal
+kablewy agent --self-test
 kablewy agent --tools '["customer_lookup"]'
 ```
 
@@ -197,9 +198,13 @@ Inside the agent:
 
 The agent can list, read, search, write, and edit files during agent turns. File changes are constrained to the agent root by default. Autonomous shell execution is restricted to read-only commands; mutating or dangerous shell commands must go through the explicit `!` approval flow. Use `--allow-shell-without-confirmation` only in trusted local sessions where immediate `!` command execution is expected.
 
+Run `kablewy agent --self-test` to verify local agent tools before a client session. It writes, reads, edits, searches, lists, runs read-only shell checks, and confirms outside-root writes plus unsafe autonomous shell commands are blocked, then cleans up its temporary test directory.
+
 Local safety options:
 
 ```bash
+kablewy agent --self-test                            # verify local file/shell tools and safety blocks
+kablewy agent --self-test --json                     # machine-readable self-test result
 kablewy agent --cwd ./project                         # set the agent root
 kablewy agent --shell-timeout-ms 120000               # default command timeout
 kablewy agent --max-output-bytes 262144               # retained stdout/stderr cap per stream

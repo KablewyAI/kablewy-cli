@@ -282,7 +282,9 @@ export const InkChat: React.FC<InkChatProps> = ({
       ? 'Dangerous command'
       : classification.risk === 'mutating'
         ? 'Mutating command'
-        : 'Read-only command';
+        : classification.risk === 'unknown'
+          ? 'Unknown command'
+          : 'Read-only command';
     return [
       `${label}: ${classification.command}`,
       `Reason: ${classification.reasons.join('; ')}`,

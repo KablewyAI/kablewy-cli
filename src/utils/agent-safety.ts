@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { redactSecrets } from './redact.js';
 
-export type ShellRisk = 'read' | 'mutating' | 'dangerous';
+export type ShellRisk = 'read' | 'mutating' | 'dangerous' | 'unknown';
 
 export interface ShellCommandClassification {
   command: string;
@@ -100,6 +100,7 @@ export function classifyShellCommand(command: string): ShellCommandClassificatio
   }
 
   if (risk === 'read' && !READ_ONLY_PATTERNS.some((pattern) => pattern.test(trimmed))) {
+    risk = 'unknown';
     reasons.push('not recognized as a simple read-only command');
   }
 
@@ -115,7 +116,7 @@ export function classifyShellCommand(command: string): ShellCommandClassificatio
     command: trimmed,
     risk,
     reasons,
-    blockedByDefault: risk === 'dangerous',
+    blockedByDefault: risk === 'dangerous' || risk === 'unknown',
     usesOutsideCwd,
   };
 }

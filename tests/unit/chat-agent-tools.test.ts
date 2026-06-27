@@ -6,6 +6,7 @@ import {
   executeLocalAgentToolCall,
   getLocalFsTools,
   resolveRequestToolsForChat,
+  runAgentSelfTest,
   streamProcessChatWithCallbacks,
 } from '../../src/commands/chat.js';
 import type { AgentSafetyConfig } from '../../src/utils/agent-safety.js';
@@ -240,6 +241,42 @@ describe('agent local tools', () => {
       }, safety);
       expect(JSON.parse(mutating.content).success).toBe(false);
       expect(JSON.parse(mutating.content).error.message).toContain('mutating');
+
+      const unknown = await executeLocalAgentToolCall({
+        id: 'call_unknown',
+        name: 'Bash',
+        arguments: { command: 'node --version' },
+      }, safety);
+      expect(JSON.parse(unknown.content).success).toBe(false);
+      expect(JSON.parse(unknown.content).error.message).toContain('unknown');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('runs a deterministic local agent self-test', async () => {
+    const { dir } = tempSafety();
+    try {
+      const result = await runAgentSelfTest({
+        cwd: dir,
+        commandTimeoutMs: 10_000,
+        maxOutputBytes: 20_000,
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.checks.map((check) => check.name)).toEqual([
+        'write_file',
+        'read_file',
+        'edit_file',
+        'search_files',
+        'list_files',
+        'shell_pwd',
+        'shell_ls',
+        'block_outside_write',
+        'block_mutating_shell',
+        'block_unknown_shell',
+      ]);
+      expect(result.checks.every((check) => check.ok)).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
