@@ -18,6 +18,7 @@ const publicCommands = [
   'docs',
   'upload',
   'chat',
+  'agent',
   'config',
   'status',
   'tools',
@@ -65,6 +66,11 @@ async function main() {
     });
 
     await expectSuccess(bin, ['skills', 'execute', '--help'], { contains: ['--env <json>'] });
+
+    await expectSuccess(bin, ['agent', '--self-test', '--json'], {
+      cwd: installDir,
+      contains: ['"success": true', '"shell_pwd"', '"block_unknown_shell"']
+    });
 
     const cleanConfigDir = join(tempRoot, 'clean-config');
     const noAuth = await expectFailure(bin, ['docs', 'list', '--json'], {
