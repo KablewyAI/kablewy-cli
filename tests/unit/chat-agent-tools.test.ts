@@ -53,11 +53,22 @@ describe('agent local tools', () => {
 
   it('adds local tools automatically for agent mode only', async () => {
     const agentTools = await resolveRequestToolsForChat({ agent: true } as any);
+    const agentToolsWithCloudTool = await resolveRequestToolsForChat({
+      agent: true,
+      tools: '[{"name":"cloud_document_lookup","description":"lookup","inputSchema":{"type":"object"}}]',
+    } as any);
     const chatTools = await resolveRequestToolsForChat({} as any);
     const disabledTools = await resolveRequestToolsForChat({ agent: true, toolsMode: 'none' } as any);
 
     expect(agentTools?.map((tool) => tool.name)).toContain('Read');
     expect(agentTools?.map((tool) => tool.name)).toContain('Write');
+    expect(agentToolsWithCloudTool?.map((tool) => tool.name)).toEqual(expect.arrayContaining([
+      'cloud_document_lookup',
+      'Read',
+      'Write',
+      'Inventory',
+      'Bash',
+    ]));
     expect(chatTools).toBeNull();
     expect(disabledTools).toBeNull();
   });
@@ -322,6 +333,23 @@ describe('agent local tools', () => {
       expect(bootstrap).toBeUndefined();
       const userMessage = messages.find((message: any) => message.role === 'user');
       expect(userMessage.content).toBe('tell me about my local directory');
+      const args = capturedBody?.params?.arguments;
+      const toolNames = args?.tools?.map((tool: any) => tool.name) || [];
+      expect(args?.tool_choice).toBe('auto');
+      expect(toolNames).toEqual(expect.arrayContaining([
+        'Read',
+        'Write',
+        'Edit',
+        'Grep',
+        'LS',
+        'Inventory',
+        'Bash',
+        'fs_read_file',
+        'fs_write_file',
+        'fs_edit_file',
+        'fs_inventory',
+        'fs_run_shell',
+      ]));
       expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -368,6 +396,12 @@ describe('agent local tools', () => {
       expect(snapshot).toBeTruthy();
       expect(snapshot.content).toContain('package.json');
       expect(snapshot.content).toContain('"name":"vague-project"');
+      expect(snapshot.content).toContain('Use the provided local tools to read, search, inventory, write, edit, or run safe shell commands');
+      expect(snapshot.content).toContain('Use Kablewy/cloud tools for Kablewy documents');
+      const args = capturedBody?.params?.arguments;
+      const toolNames = args?.tools?.map((tool: any) => tool.name) || [];
+      expect(args?.tool_choice).toBe('auto');
+      expect(toolNames).toEqual(expect.arrayContaining(['Read', 'Write', 'Edit', 'Inventory', 'Bash']));
       expect(messages.find((message: any) => message.role === 'system' && String(message.content).includes('Local CLI Pre-Run Result'))).toBeUndefined();
       expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {

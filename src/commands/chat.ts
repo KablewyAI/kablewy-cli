@@ -1169,7 +1169,8 @@ async function buildAgentWorkspaceSnapshotMessage(options: ChatOptions): Promise
   const lines = [
     '## Current Local Workspace Snapshot',
     'This snapshot is injected automatically on every Kablewy Agent turn. Treat it as current local evidence.',
-    'Use local filesystem tools for deeper inspection. Do not use Kablewy Bridge/resource tools to discover this local machine.',
+    'This snapshot is orientation only. Use the provided local tools to read, search, inventory, write, edit, or run safe shell commands against this workspace. Use Kablewy/cloud tools for Kablewy documents, integrations, and remote platform resources.',
+    'Do not use Kablewy Bridge/resource tools to discover or modify this local machine.',
     `cwd: ${root}`,
     `platform: ${process.platform} ${process.arch}; node: ${process.version}`,
   ];
@@ -2313,11 +2314,13 @@ export async function streamProcessChatWithCallbacks(
     isAgentMode ? 'You are running inside Kablewy Agent, a beta local terminal agent mode.' : 'You are running inside the Kablewy CLI Enhanced TUI.',
     'Capabilities for this terminal session:',
     isAgentMode
-      ? '- Local tools: Prefer fs_list_files, fs_read_file, fs_search_files, fs_inventory, fs_write_file, fs_edit_file, and fs_run_shell under the current project root. Standard aliases LS, Read, Grep, Inventory, Write, Edit, and Bash are also supported. Use Inventory/fs_inventory for recursive repo or directory scans. fs_run_shell/Bash is restricted to read-only commands; use fs_write_file/fs_edit_file for file changes. Mutating or dangerous shell commands are blocked unless the user explicitly runs them with ! command approval.'
+      ? '- Local tools: This is an interactive local tool environment. Use fs_list_files, fs_read_file, fs_search_files, fs_inventory, fs_write_file, fs_edit_file, and fs_run_shell under the current project root to inspect and modify the workspace. Standard aliases LS, Read, Grep, Inventory, Write, Edit, and Bash are also supported. Use Inventory/fs_inventory for recursive repo or directory scans. Use fs_write_file/fs_edit_file for file changes. fs_run_shell/Bash is restricted to read-only commands; mutating or dangerous shell commands are blocked unless the user explicitly runs them with ! command approval.'
       : '- Shell: The user can execute shell commands directly by prefixing with !, and may enable autorun. When you propose commands, output them in bash code fences or lines starting with "$ ". Keep them safe and reproducible. Prefer read-only commands by default. Use the project root as the working directory unless stated otherwise.',
     isAgentMode ? '- Shell UX: If a command is mutating or destructive, propose it in a bash code fence or ask the user to run it with ! so the terminal approval flow can protect the workspace.' : '',
     '- File attachments: The user can attach files using @ path. You can assume attached files are included in the hidden context even if the transcript only shows the paths.',
-    '- Tools: Only call tools that are explicitly provided in this request (tool_choice=auto). Do not assume local filesystem tools unless listed. Use document tools for Kablewy documents.',
+    isAgentMode
+      ? '- Tools: Agent requests may include Kablewy/cloud tools plus the local filesystem/shell tools. The local tools are explicitly provided on every agent request (tool_choice=auto). Use local tools directly for local workspace interaction; use Kablewy/cloud tools for Kablewy documents, integrations, and remote platform resources.'
+      : '- Tools: Only call tools that are explicitly provided in this request (tool_choice=auto). Do not assume local filesystem tools unless listed. Use document tools for Kablewy documents.',
     isAgentMode ? '- File edits: You may claim an edit only after Write/Edit or fs_write_file/fs_edit_file reports success, or after the user runs a command that changes files.' : '',
     isAgentMode ? '- Local discovery: When the user asks about the local directory, cwd, workspace, project, repo, or local files, use the Local CLI pre-run result or the local filesystem tools. Do not use Kablewy Bridge/resource tools such as search_tools or read_resource to discover the local machine.' : '',
     isAgentMode ? '- Local evidence: Truncated local listings are incomplete. They can prove returned entries exist, but they cannot prove a missing path does not exist. For follow-up path questions, rely on the fresh targeted local result in this request.' : '',

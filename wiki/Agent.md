@@ -34,7 +34,7 @@ kablewy agent --cwd ./project
 
 Local file tools are constrained to the agent root by default. Use `--allow-outside-cwd` only for trusted local sessions where the agent needs files outside that root.
 
-Every agent turn includes a compact local workspace snapshot: cwd, platform, git root when available, top-level entries, key project files, and lightweight package metadata. This keeps common local tasks reliable even when the remote model does not choose a tool on its own.
+Every agent turn includes a compact local workspace snapshot: cwd, platform, git root when available, top-level entries, key project files, and lightweight package metadata. This keeps common local tasks reliable even when the remote model does not choose a tool on its own. The snapshot is only orientation. Agent mode can use Kablewy/cloud tools for documents, integrations, and platform resources, and it always includes the local tool set (`Read`, `Write`, `Edit`, `Grep`, `LS`, `Inventory`, and `Bash`) for local workspace interaction.
 
 For direct local requests such as `pwd`, checking a named subdirectory, reading a named file, recursively inventorying a project, or writing a test file and reading it back, the CLI can also run a targeted local operation first and pass the result into the model turn. Common read-only shell requests such as `pwd`, `ls`/`dir`, and `cat`/`type` are handled portably by the CLI when possible, so basic inspection works across macOS, Linux, and Windows.
 
