@@ -36,7 +36,14 @@ async function main() {
   try {
     const packDir = join(tempRoot, 'pack');
     const installDir = join(tempRoot, 'install');
-    const npmEnv = { npm_config_cache: join(tempRoot, 'npm-cache') };
+    const npmEnv = {
+      npm_config_cache: join(tempRoot, 'npm-cache'),
+      // `npm publish --dry-run` exports npm_config_dry_run=true to lifecycle
+      // scripts. This smoke test needs its nested `npm pack` to create a real
+      // local tarball so the clean install path is exercised.
+      npm_config_dry_run: 'false',
+      NPM_CONFIG_DRY_RUN: 'false'
+    };
     await mkdir(packDir, { recursive: true });
     await mkdir(installDir, { recursive: true });
 
