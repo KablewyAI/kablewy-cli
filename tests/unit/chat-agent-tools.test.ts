@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -98,6 +98,71 @@ describe('agent local tools', () => {
       expect(toolNames).toContain('fs_run_shell');
       expect(chunks.join('')).toContain('ok');
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('executes backend-returned local tool calls and continues with the result', async () => {
+    const { dir, safety } = tempSafety();
+    const capturedBodies: any[] = [];
+    const fetchMock = vi.fn(async (_url: string, init: any) => {
+      const body = JSON.parse(String(init?.body || '{}'));
+      capturedBodies.push(body);
+      if (capturedBodies.length === 1) {
+        return new Response([
+          'data: {"type":"tool_calls_response","success":true,"requiresContinuation":true,"tool_calls":[{"id":"call_pwd","name":"fs_run_shell","arguments":"{\\"command\\":\\"pwd\\"}"}],"response":""}',
+          '',
+          'data: [DONE]',
+          '',
+          '',
+        ].join('\n'), {
+          status: 200,
+          headers: { 'content-type': 'text/event-stream' },
+        });
+      }
+      return new Response('data: {"type":"content","content":"done"}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const chunks: string[] = [];
+      const toolEvents: string[] = [];
+      await streamProcessChatWithCallbacks('chat-1', 'can you run pwd?', {
+        agent: true,
+        agentSafety: safety,
+      } as any, {
+        config: {
+          get: (key: string) => ({
+            apiUrl: 'https://api.example.com',
+            orgId: 'org-1',
+            userId: 'user-1',
+            apiKey: 'api_test_key',
+          } as Record<string, string>)[key],
+        },
+        telemetry: { command: 'agent' },
+      } as any, {
+        onText: (chunk) => chunks.push(chunk),
+        onToolEvent: (event) => toolEvents.push(event),
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(toolEvents).toEqual([
+        'local_tool_call: fs_run_shell',
+        'local_tool_result: fs_run_shell',
+      ]);
+      const continuationArgs = capturedBodies[1]?.params?.arguments;
+      expect(continuationArgs?.options?.continuation).toBe(true);
+      const toolMessage = continuationArgs?.messages?.find((message: any) => message.role === 'tool' && message.tool_call_id === 'call_pwd');
+      expect(toolMessage).toBeTruthy();
+      const toolPayload = JSON.parse(toolMessage.content);
+      expect(toolPayload.success).toBe(true);
+      expect(realpathSync(toolPayload.data.stdout.trim())).toBe(realpathSync(dir));
+      expect(chunks.join('')).toContain('done');
     } finally {
       rmSync(dir, { recursive: true, force: true });
       vi.unstubAllGlobals();
