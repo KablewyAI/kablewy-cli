@@ -196,7 +196,7 @@ Inside the agent:
 /help                       show agent controls
 ```
 
-The agent can list, read, search, write, and edit files during agent turns. File changes are constrained to the agent root by default. Autonomous shell execution is restricted to read-only commands; mutating or dangerous shell commands must go through the explicit `!` approval flow. Use `--allow-shell-without-confirmation` only in trusted local sessions where immediate `!` command execution is expected.
+The agent can list, read, search, write, and edit files during agent turns. File changes are constrained to the agent root by default. For obvious requests such as `pwd`, listing the current directory, reading a named file, or writing a test file and reading it back, the CLI pre-runs the local tool and gives the result to the model. Autonomous shell execution is restricted to read-only commands; mutating or dangerous shell commands must go through the explicit `!` approval flow. Use `--allow-shell-without-confirmation` only in trusted local sessions where immediate `!` command execution is expected.
 
 Run `kablewy agent --self-test` to verify local agent tools before a client session. It writes, reads, edits, searches, lists, runs read-only shell checks, and confirms outside-root writes plus unsafe autonomous shell commands are blocked, then cleans up its temporary test directory.
 

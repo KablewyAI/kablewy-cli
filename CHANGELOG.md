@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   local filesystem/shell diagnostics. The check verifies local write, read,
   edit, search, list, read-only shell execution, and safety blocks for
   outside-root writes plus unsafe autonomous shell commands.
+- **Agent local bootstrap** — Obvious local requests such as `pwd`, directory
+  listing, simple file reads, and explicit write/readback test-file requests now
+  run locally before the model response, so the answer can use local results
+  even if the model does not choose a tool on its own.
 
 ### Fixed
 

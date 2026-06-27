@@ -133,7 +133,7 @@ describe('agent local tools', () => {
     try {
       const chunks: string[] = [];
       const toolEvents: string[] = [];
-      await streamProcessChatWithCallbacks('chat-1', 'can you run pwd?', {
+      await streamProcessChatWithCallbacks('chat-1', 'please continue with the backend tool call', {
         agent: true,
         agentSafety: safety,
       } as any, {
@@ -164,6 +164,162 @@ describe('agent local tools', () => {
       expect(toolPayload.success).toBe(true);
       expect(realpathSync(toolPayload.data.stdout.trim())).toBe(realpathSync(dir));
       expect(chunks.join('')).toContain('done');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('pre-runs obvious pwd requests before the model response', async () => {
+    const { dir, safety } = tempSafety();
+    let capturedBody: any;
+    const fetchMock = vi.fn(async (_url: string, init: any) => {
+      capturedBody = JSON.parse(String(init?.body || '{}'));
+      return new Response('data: {"type":"content","content":"done"}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const toolEvents: string[] = [];
+      await streamProcessChatWithCallbacks('chat-1', 'can you run pwd?', {
+        agent: true,
+        agentSafety: safety,
+      } as any, {
+        config: {
+          get: (key: string) => ({
+            apiUrl: 'https://api.example.com',
+            orgId: 'org-1',
+            userId: 'user-1',
+            apiKey: 'api_test_key',
+          } as Record<string, string>)[key],
+        },
+        telemetry: { command: 'agent' },
+      } as any, {
+        onText: () => undefined,
+        onToolEvent: (event) => toolEvents.push(event),
+      });
+
+      expect(toolEvents).toEqual([
+        'local_tool_call: Bash',
+        'local_tool_result: Bash',
+      ]);
+      const messages = capturedBody?.params?.arguments?.messages || [];
+      const bootstrap = messages.find((message: any) => message.role === 'system' && String(message.content).includes('Local CLI Pre-Run Result'));
+      expect(bootstrap).toBeTruthy();
+      expect(bootstrap.content).toContain('"command":"pwd"');
+      expect(bootstrap.content).toContain(realpathSync(dir));
+      const userMessage = messages.find((message: any) => message.role === 'user');
+      expect(userMessage.content).toContain('Local CLI pre-run result for this request');
+      expect(userMessage.content).toContain(realpathSync(dir));
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('pre-runs obvious directory listing requests before the model response', async () => {
+    const { dir, safety } = tempSafety();
+    writeFileSync(path.join(dir, 'alpha.txt'), 'hello\n');
+    let capturedBody: any;
+    const fetchMock = vi.fn(async (_url: string, init: any) => {
+      capturedBody = JSON.parse(String(init?.body || '{}'));
+      return new Response('data: {"type":"content","content":"done"}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const toolEvents: string[] = [];
+      await streamProcessChatWithCallbacks('chat-1', 'list the files in this directory', {
+        agent: true,
+        agentSafety: safety,
+      } as any, {
+        config: {
+          get: (key: string) => ({
+            apiUrl: 'https://api.example.com',
+            orgId: 'org-1',
+            userId: 'user-1',
+            apiKey: 'api_test_key',
+          } as Record<string, string>)[key],
+        },
+        telemetry: { command: 'agent' },
+      } as any, {
+        onText: () => undefined,
+        onToolEvent: (event) => toolEvents.push(event),
+      });
+
+      expect(toolEvents).toEqual([
+        'local_tool_call: LS',
+        'local_tool_result: LS',
+      ]);
+      const messages = capturedBody?.params?.arguments?.messages || [];
+      const bootstrap = messages.find((message: any) => message.role === 'system' && String(message.content).includes('Local CLI Pre-Run Result'));
+      expect(bootstrap).toBeTruthy();
+      expect(bootstrap.content).toContain('alpha.txt');
+      const userMessage = messages.find((message: any) => message.role === 'user');
+      expect(userMessage.content).toContain('Local CLI pre-run result for this request');
+      expect(userMessage.content).toContain('alpha.txt');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('pre-runs explicit write-and-readback requests before the model response', async () => {
+    const { dir, safety } = tempSafety();
+    let capturedBody: any;
+    const fetchMock = vi.fn(async (_url: string, init: any) => {
+      capturedBody = JSON.parse(String(init?.body || '{}'));
+      return new Response('data: {"type":"content","content":"done"}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const toolEvents: string[] = [];
+      await streamProcessChatWithCallbacks('chat-1', 'write a small test file named sample.txt and read it back', {
+        agent: true,
+        agentSafety: safety,
+      } as any, {
+        config: {
+          get: (key: string) => ({
+            apiUrl: 'https://api.example.com',
+            orgId: 'org-1',
+            userId: 'user-1',
+            apiKey: 'api_test_key',
+          } as Record<string, string>)[key],
+        },
+        telemetry: { command: 'agent' },
+      } as any, {
+        onText: () => undefined,
+        onToolEvent: (event) => toolEvents.push(event),
+      });
+
+      expect(toolEvents).toEqual([
+        'local_tool_call: Write',
+        'local_tool_result: Write',
+        'local_tool_call: Read',
+        'local_tool_result: Read',
+      ]);
+      expect(readFileSync(path.join(dir, 'sample.txt'), 'utf8')).toContain('Kablewy agent local write test');
+      const messages = capturedBody?.params?.arguments?.messages || [];
+      const bootstrap = messages.find((message: any) => message.role === 'system' && String(message.content).includes('Local CLI Pre-Run Result'));
+      expect(bootstrap).toBeTruthy();
+      expect(bootstrap.content).toContain('sample.txt');
+      expect(bootstrap.content).toContain('Kablewy agent local write test');
+      const userMessage = messages.find((message: any) => message.role === 'user');
+      expect(userMessage.content).toContain('Local CLI pre-run result for this request');
+      expect(userMessage.content).toContain('sample.txt');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
       vi.unstubAllGlobals();
