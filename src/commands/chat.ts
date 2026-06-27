@@ -957,6 +957,135 @@ function normalizeLocalToolArguments(name: string, args: Record<string, any>): R
   return args;
 }
 
+interface AgentLocalBootstrapToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, any>;
+}
+
+function stripTrailingSentencePunctuation(value: string): string {
+  let trimmed = value.trim();
+  while (trimmed.endsWith('.') || trimmed.endsWith('?') || trimmed.endsWith('!')) {
+    trimmed = trimmed.slice(0, -1).trimEnd();
+  }
+  return trimmed;
+}
+
+function inferAgentLocalBootstrapToolCalls(message: string): AgentLocalBootstrapToolCall[] {
+  const text = String(message || '').trim();
+  if (!text) return [];
+  const lower = text.toLowerCase();
+  const idPrefix = `local_bootstrap_${Date.now()}`;
+
+  const writeNamedFile = text.match(/\b(?:write|create)\s+(?:a\s+)?(?:small\s+)?(?:test\s+)?(?:file\s+)?(?:named|called)\s+([A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+)(?:\s+(?:with|containing)\s+([\s\S]{1,500}))?/i);
+  const writeReadback = /\b(?:write|create)\b[\s\S]{0,120}\b(?:test\s+)?file\b[\s\S]{0,120}\bread (?:it|that file|the file) back\b/i.test(text);
+  if (writeNamedFile || writeReadback) {
+    const filePath = writeNamedFile?.[1] || 'kablewy-agent-test.txt';
+    const content = stripTrailingSentencePunctuation(writeNamedFile?.[2] || '')
+      || `Kablewy agent local write test ${new Date().toISOString()}\n`;
+    const calls: AgentLocalBootstrapToolCall[] = [{
+      id: `${idPrefix}_write`,
+      name: 'Write',
+      arguments: { file_path: filePath, content },
+    }];
+    if (writeReadback || /\bread (?:it|that file|the file) back\b/i.test(text)) {
+      calls.push({
+        id: `${idPrefix}_read`,
+        name: 'Read',
+        arguments: { file_path: filePath, full: true },
+      });
+    }
+    return calls;
+  }
+
+  const inlineCommand = text.match(/`([^`\n]{1,300})`/);
+  if (inlineCommand && /\b(run|execute|shell|command|terminal)\b/i.test(text)) {
+    return [{
+      id: idPrefix,
+      name: 'Bash',
+      arguments: { command: stripTrailingSentencePunctuation(inlineCommand[1]) },
+    }];
+  }
+
+  if (/\bpwd\b/.test(lower) && /\b(run|execute|access|show|print|tell|get|what|where)\b/.test(lower)) {
+    return [{
+      id: idPrefix,
+      name: 'Bash',
+      arguments: { command: 'pwd' },
+    }];
+  }
+
+  const runCommand = text.match(/\b(?:run|execute)\s+((?:pwd|ls(?:\s+-[A-Za-z]+)?|git\s+(?:status|diff|log|show)(?:\s+[^\n.?!]*)?|rg\s+[^\n.?!]+|grep\s+[^\n.?!]+|find\s+[^\n.?!]+|cat\s+[^\n.?!]+|head\s+[^\n.?!]+|tail\s+[^\n.?!]+|wc\s+[^\n.?!]+))/i);
+  if (runCommand) {
+    return [{
+      id: idPrefix,
+      name: 'Bash',
+      arguments: { command: stripTrailingSentencePunctuation(runCommand[1]) },
+    }];
+  }
+
+  if (
+    /\b(list|show|display|see|what(?:'s| is)?)\b/.test(lower) &&
+    /\b(files|directory|folder|cwd|current directory|this directory)\b/.test(lower)
+  ) {
+    return [{
+      id: idPrefix,
+      name: 'LS',
+      arguments: { path: '.', max_depth: 1, include_hidden: false },
+    }];
+  }
+
+  const readFile = text.match(/\b(?:read|open|show|display)\s+(?:the\s+)?(?:file\s+)?([A-Za-z0-9_./-]+\.[A-Za-z0-9_-]+)\b/i);
+  if (readFile) {
+    return [{
+      id: idPrefix,
+      name: 'Read',
+      arguments: { file_path: readFile[1], full: false },
+    }];
+  }
+
+  return [];
+}
+
+function truncateAgentBootstrapContent(value: string): string {
+  const maxChars = 12000;
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, maxChars)}\n...truncated ${value.length - maxChars} chars...`;
+}
+
+async function buildAgentLocalBootstrapMessages(
+  message: string,
+  options: ChatOptions,
+  cb: { onToolEvent: (text: string) => void }
+): Promise<Array<{ role: 'system'; content: string }>> {
+  if ((options as any)?.toolsMode === 'none') return [];
+  const toolCalls = inferAgentLocalBootstrapToolCalls(message);
+  if (toolCalls.length === 0) return [];
+
+  const results: string[] = [];
+  for (const toolCall of toolCalls) {
+    cb.onToolEvent(`local_tool_call: ${toolCall.name}`);
+    const result = await executeLocalAgentToolCall(toolCall, (options as any)?.agentSafety);
+    cb.onToolEvent(`local_tool_result: ${toolCall.name}`);
+    results.push([
+      `Tool: ${toolCall.name}`,
+      `Arguments: ${JSON.stringify(toolCall.arguments)}`,
+      `Result: ${truncateAgentBootstrapContent(result.content)}`,
+    ].join('\n'));
+  }
+
+  return [{
+    role: 'system',
+    content: [
+      '## Local CLI Pre-Run Result',
+      'The Kablewy CLI detected obvious local filesystem/shell request(s) and executed them locally before this model response.',
+      'Use this current local result when answering. Do not say local filesystem or shell access is unavailable for this request.',
+      '',
+      results.join('\n\n'),
+    ].join('\n'),
+  }];
+}
+
 function resolveAgentToolPath(rootCwd: string, rawPath: unknown, allowOutsideCwd: boolean): string {
   const value = typeof rawPath === 'string' && rawPath.trim() ? rawPath.trim() : '.';
   const resolved = path.resolve(rootCwd, value);
@@ -1531,12 +1660,24 @@ export async function streamProcessChatWithCallbacks(
   const systemPrompt = userSystem ? `${injectedSystem}\n\n${userSystem}` : injectedSystem;
   const toolsList = await resolveRequestToolsForChat(_options);
   const toolsMode = ((_options as any)?.toolsMode as 'exact' | 'none' | undefined);
+  const agentBootstrapMessages = isAgentMode
+    ? await buildAgentLocalBootstrapMessages(message, _options, cb)
+    : [];
   const hist = ((_options as any)?.__history as Array<{ role: 'user' | 'assistant'; content: string }>) || [];
   const maxHistMsgs = Number(process.env.KABLEWY_HISTORY_MAX_MSGS || '16');
   const maxHistChars = Number(process.env.KABLEWY_HISTORY_TOTAL_CHARS || '64000');
   const histSlice = maxHistMsgs > 0 ? hist.slice(Math.max(0, hist.length - maxHistMsgs)) : [];
   const baseMessages: any[] = [];
   if (systemPrompt) baseMessages.push({ role: 'system', content: systemPrompt });
+  baseMessages.push(...agentBootstrapMessages);
+  const currentUserContent = agentBootstrapMessages.length > 0
+    ? [
+        message,
+        '',
+        'Local CLI pre-run result for this request:',
+        ...agentBootstrapMessages.map((bootstrap) => bootstrap.content),
+      ].join('\n')
+    : message;
   let acc = 0;
   for (const h of histSlice) {
     const text = (h.content || '');
@@ -1546,7 +1687,7 @@ export async function streamProcessChatWithCallbacks(
     baseMessages.push({ role: h.role, content: clipped });
     acc += clipped.length;
   }
-  baseMessages.push({ role: 'user', content: message });
+  baseMessages.push({ role: 'user', content: currentUserContent });
 
   let continuationMessages: LocalToolResultMessage[] = [];
   let continuation = false;

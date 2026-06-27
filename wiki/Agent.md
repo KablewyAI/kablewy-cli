@@ -34,6 +34,8 @@ kablewy agent --cwd ./project
 
 Local file tools are constrained to the agent root by default. Use `--allow-outside-cwd` only for trusted local sessions where the agent needs files outside that root.
 
+For obvious requests such as `pwd`, listing the current directory, reading a named file, or writing a test file and reading it back, the CLI runs the local tool first and passes the result into the model turn. This keeps common local tasks reliable even when the remote model does not choose a tool on its own.
+
 ## Shell Boundary
 
 Autonomous shell execution is restricted to recognized read-only inspection commands such as `pwd`, `ls`, `cat`, `head`, `tail`, `wc`, `rg`, `grep`, `find`, `git status`, `git diff`, `git log`, `git show`, `npm test`, and `npm run test`.
