@@ -34,7 +34,9 @@ kablewy agent --cwd ./project
 
 Local file tools are constrained to the agent root by default. Use `--allow-outside-cwd` only for trusted local sessions where the agent needs files outside that root.
 
-For direct local requests such as `pwd`, listing the current directory, checking a named subdirectory, reading a named file, recursively inventorying a project, or writing a test file and reading it back, the CLI runs the local operation first and passes the result into the model turn. This keeps common local tasks reliable even when the remote model does not choose a tool on its own. Common read-only shell requests such as `pwd`, `ls`/`dir`, and `cat`/`type` are handled portably by the CLI when possible, so basic inspection works across macOS, Linux, and Windows.
+Every agent turn includes a compact local workspace snapshot: cwd, platform, git root when available, top-level entries, key project files, and lightweight package metadata. This keeps common local tasks reliable even when the remote model does not choose a tool on its own.
+
+For direct local requests such as `pwd`, checking a named subdirectory, reading a named file, recursively inventorying a project, or writing a test file and reading it back, the CLI can also run a targeted local operation first and pass the result into the model turn. Common read-only shell requests such as `pwd`, `ls`/`dir`, and `cat`/`type` are handled portably by the CLI when possible, so basic inspection works across macOS, Linux, and Windows.
 
 Large listings are intentionally capped. A truncated listing proves returned entries exist, but it does not prove omitted paths are absent. Follow-up questions about a path, such as `what is in src?` after a truncated root listing, run a fresh targeted local check.
 
@@ -67,4 +69,4 @@ kablewy agent --allow-shell-without-confirmation
 
 The CLI is not a sandbox or Wasm runtime. Approved local shell commands run with the local user's normal permissions. Hosted skills and MCP execution run on Kablewy's platform; local agent tools run on the user's machine.
 
-Local tool results are not passive telemetry, but they are sent as model context when the agent needs them to answer your request. For example, if you ask the agent to read a file or inspect command output, that local result is included in the model turn.
+Local workspace snapshots and local tool results are not passive telemetry, but they are sent as model context. Each agent turn includes the compact workspace snapshot. If you ask the agent to read a file or inspect command output, that local result is also included in the model turn.

@@ -26,12 +26,7 @@ const scenarios = [
   {
     name: 'local-directory-overview',
     message: 'tell me about my local directory',
-    expectedEvents: [
-      'local_tool_call: Bash',
-      'local_tool_result: Bash',
-      'local_tool_call: Inventory',
-      'local_tool_result: Inventory',
-    ],
+    expectedEvents: [],
     assert: ({ text, probeDir }) => /probe\.txt/.test(text) || normalizePathText(text).includes(normalizePathText(probeDir)),
   },
   {

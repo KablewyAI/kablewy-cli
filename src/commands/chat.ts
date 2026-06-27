@@ -1100,6 +1100,126 @@ function buildAgentWorkspaceContext(state: AgentWorkspaceState | undefined): str
   return lines.join('\n');
 }
 
+const SNAPSHOT_KEY_FILES = [
+  'package.json',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'yarn.lock',
+  'pyproject.toml',
+  'requirements.txt',
+  'Cargo.toml',
+  'go.mod',
+  'deno.json',
+  'tsconfig.json',
+  'README.md',
+  'AGENTS.md',
+  '.gitignore',
+];
+
+function findGitRoot(start: string): string | null {
+  let current = path.resolve(start);
+  while (current && current !== path.dirname(current)) {
+    if (fs.existsSync(path.join(current, '.git'))) return current;
+    current = path.dirname(current);
+  }
+  return fs.existsSync(path.join(current, '.git')) ? current : null;
+}
+
+async function summarizePackageJson(root: string): Promise<Record<string, any> | null> {
+  const packagePath = path.join(root, 'package.json');
+  const stat = await fsp.stat(packagePath).catch(() => null);
+  if (!stat?.isFile() || stat.size > 256 * 1024) return null;
+  try {
+    const parsed = JSON.parse(await fsp.readFile(packagePath, 'utf8'));
+    return {
+      name: typeof parsed.name === 'string' ? parsed.name : undefined,
+      version: typeof parsed.version === 'string' ? parsed.version : undefined,
+      type: typeof parsed.type === 'string' ? parsed.type : undefined,
+      scripts: parsed.scripts && typeof parsed.scripts === 'object'
+        ? Object.keys(parsed.scripts).sort().slice(0, 30)
+        : [],
+      dependencies: parsed.dependencies && typeof parsed.dependencies === 'object'
+        ? Object.keys(parsed.dependencies).sort().slice(0, 30)
+        : [],
+      devDependencies: parsed.devDependencies && typeof parsed.devDependencies === 'object'
+        ? Object.keys(parsed.devDependencies).sort().slice(0, 30)
+        : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function buildAgentWorkspaceSnapshotMessage(options: ChatOptions): Promise<{ role: 'system'; content: string } | null> {
+  if (!(options as any)?.agent) return null;
+  const workspaceState = getAgentWorkspaceState(options);
+  if (!workspaceState) return null;
+  const safety = (options as any)?.agentSafety as AgentSafetyConfig | undefined;
+  const root = path.resolve(safety?.cwd || process.cwd());
+  const snapshotSafety: AgentSafetyConfig = safety || {
+    cwd: root,
+    allowDangerousShell: false,
+    allowOutsideCwd: false,
+    requireShellApproval: true,
+    commandTimeoutMs: DEFAULT_AGENT_COMMAND_TIMEOUT_MS,
+    maxOutputBytes: DEFAULT_AGENT_MAX_OUTPUT_BYTES,
+  };
+
+  rememberWorkspacePath(workspaceState, '.');
+  const lines = [
+    '## Current Local Workspace Snapshot',
+    'This snapshot is injected automatically on every Kablewy Agent turn. Treat it as current local evidence.',
+    'Use local filesystem tools for deeper inspection. Do not use Kablewy Bridge/resource tools to discover this local machine.',
+    `cwd: ${root}`,
+    `platform: ${process.platform} ${process.arch}; node: ${process.version}`,
+  ];
+
+  const gitRoot = findGitRoot(root);
+  if (gitRoot) lines.push(`git_root: ${gitRoot}`);
+
+  try {
+    const listing = await listAgentFiles(root, {
+      path: '.',
+      max_depth: 1,
+      include_hidden: false,
+      max_entries: 200,
+    }, snapshotSafety);
+    workspaceState.observations['.'] = {
+      path: '.',
+      tool: 'fs_list_files',
+      truncated: listing.truncated === true,
+      timestamp: Date.now(),
+      entryPaths: Array.isArray(listing.entries)
+        ? listing.entries.map((entry: any) => String(entry.path || '')).filter(Boolean).slice(0, 200)
+        : [],
+    };
+    const entries = Array.isArray(listing.entries) ? listing.entries : [];
+    const directories = entries.filter((entry: any) => entry.type === 'directory').map((entry: any) => entry.path).slice(0, 80);
+    const files = entries.filter((entry: any) => entry.type === 'file').map((entry: any) => entry.path).slice(0, 80);
+    const keyFiles = entries
+      .map((entry: any) => String(entry.path || ''))
+      .filter((entryPath: string) => SNAPSHOT_KEY_FILES.includes(entryPath))
+      .sort();
+    lines.push(`top_level_count: ${entries.length}; truncated: ${listing.truncated === true}`);
+    if (keyFiles.length) lines.push(`key_files: ${keyFiles.join(', ')}`);
+    if (directories.length) lines.push(`top_level_directories: ${directories.join(', ')}`);
+    if (files.length) lines.push(`top_level_files: ${files.join(', ')}`);
+    if (listing.truncated) lines.push('snapshot_warning: top-level listing is incomplete; use LS/Inventory for narrower or paged inspection.');
+  } catch (error: unknown) {
+    lines.push(`snapshot_error: ${error instanceof Error ? error.message : String(error)}`);
+  }
+
+  const packageSummary = await summarizePackageJson(root);
+  if (packageSummary) {
+    lines.push(`package_json: ${truncateAgentBootstrapContent(JSON.stringify(packageSummary))}`);
+  }
+
+  return {
+    role: 'system',
+    content: lines.join('\n'),
+  };
+}
+
 function stripTrailingSentencePunctuation(value: string): string {
   let trimmed = value.trim();
   while (trimmed.endsWith('.') || trimmed.endsWith('?') || trimmed.endsWith('!')) {
@@ -1192,26 +1312,6 @@ function inferAgentLocalBootstrapToolCalls(message: string, state?: AgentWorkspa
     }];
   }
 
-  const asksAboutLocalDirectory = (
-    /\b(tell|describe|summarize|inspect|analy[sz]e|discover|overview|explain|what(?:'s| is)?)\b/.test(lower) &&
-    /\b(local\s+directory|working\s+directory|current\s+directory|this\s+directory|cwd|workspace|project\s+root|repo|repository|where\s+i\s+am)\b/.test(lower)
-  ) || /\btell me about (?:my|the|this|our) local directory\b/.test(lower);
-  if (asksAboutLocalDirectory) {
-    rememberWorkspacePath(state, '.');
-    return [
-      {
-        id: `${idPrefix}_pwd`,
-        name: 'Bash',
-        arguments: { command: 'pwd' },
-      },
-      {
-        id: `${idPrefix}_inventory`,
-        name: 'Inventory',
-        arguments: { path: '.', max_depth: 3, include_hidden: false, max_entries: 1000 },
-      },
-    ];
-  }
-
   if (
     /\b(recursive|recursively|inventory|inventorize|tree|entire|whole)\b/.test(lower) &&
     /\b(directory|folder|repo|repository|project|cwd|this|current|inventory|list|map)\b/.test(lower)
@@ -1258,7 +1358,7 @@ function inferAgentLocalBootstrapToolCalls(message: string, state?: AgentWorkspa
   }
 
   if (
-    /\b(list|show|display|see|tell|describe|inspect|discover|what(?:'s| is)?)\b/.test(lower) &&
+    /\b(list|show|display|see|what(?:'s| is)?)\b/.test(lower) &&
     /\b(files|directory|folder|cwd|working directory|current directory|this directory|local directory)\b/.test(lower)
   ) {
     rememberWorkspacePath(state, '.');
@@ -2232,6 +2332,9 @@ export async function streamProcessChatWithCallbacks(
   const agentBootstrapMessages = isAgentMode
     ? await buildAgentLocalBootstrapMessages(message, _options, cb)
     : [];
+  const agentWorkspaceSnapshot = isAgentMode
+    ? await buildAgentWorkspaceSnapshotMessage(_options)
+    : null;
   const agentWorkspaceContext = isAgentMode
     ? buildAgentWorkspaceContext(getAgentWorkspaceState(_options))
     : null;
@@ -2241,6 +2344,7 @@ export async function streamProcessChatWithCallbacks(
   const histSlice = maxHistMsgs > 0 ? hist.slice(Math.max(0, hist.length - maxHistMsgs)) : [];
   const baseMessages: any[] = [];
   if (systemPrompt) baseMessages.push({ role: 'system', content: systemPrompt });
+  if (agentWorkspaceSnapshot) baseMessages.push(agentWorkspaceSnapshot);
   if (agentWorkspaceContext) baseMessages.push({ role: 'system', content: agentWorkspaceContext });
   baseMessages.push(...agentBootstrapMessages);
   const currentUserContent = agentBootstrapMessages.length > 0
