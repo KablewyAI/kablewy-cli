@@ -40,6 +40,7 @@ login, logout, whoami
 auth keys list|revoke
 docs upload|list|search|get|delete|status
 chat
+agent
 tools
 mcp
 quick-actions

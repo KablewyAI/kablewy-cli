@@ -24,6 +24,14 @@ describe('agent safety utilities', () => {
     expect(result.reasons.join(' ')).toContain('change local files');
   });
 
+  it('blocks unrecognized autonomous shell commands by default', () => {
+    const result = classifyShellCommand('node --version');
+
+    expect(result.risk).toBe('unknown');
+    expect(result.blockedByDefault).toBe(true);
+    expect(result.reasons.join(' ')).toContain('not recognized');
+  });
+
   it('blocks dangerous shell patterns by default', () => {
     const result = classifyShellCommand('rm -rf dist');
 

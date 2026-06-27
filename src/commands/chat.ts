@@ -62,6 +62,8 @@ export function createAgentCommand(context: CommandContext): Command {
     .option('--max-output-bytes <bytes>', `Max retained stdout/stderr bytes per stream (default: ${DEFAULT_AGENT_MAX_OUTPUT_BYTES})`, parsePositiveInt)
     .option('--audit-log <path>', 'Write redacted JSONL session audit log to this path')
     .option('--no-audit-log', 'Disable the local redacted JSONL session audit log')
+    .option('--self-test', 'Run local filesystem/shell tool diagnostics and exit')
+    .option('--json', 'Output self-test diagnostics as JSON')
     .option('--allow-dangerous-shell', 'Allow dangerous shell patterns after explicit confirmation')
     .option('--allow-outside-cwd', 'Allow local file attachments and shell commands outside the working directory')
     .option('--allow-shell-without-confirmation', 'Run ! shell commands immediately instead of asking for approval')
@@ -73,8 +75,38 @@ export function createAgentCommand(context: CommandContext): Command {
       shellTimeoutMs?: number;
       maxOutputBytes?: number;
       auditLog?: string | false;
+      selfTest?: boolean;
+      json?: boolean;
     }) => {
       const cwd = resolveAgentCwd(options.cwd);
+      if (options.selfTest) {
+        const result = await runAgentSelfTest({
+          cwd,
+          allowOutsideCwd: options.allowOutsideCwd === true,
+          commandTimeoutMs: options.shellTimeoutMs ?? DEFAULT_AGENT_COMMAND_TIMEOUT_MS,
+          maxOutputBytes: options.maxOutputBytes ?? DEFAULT_AGENT_MAX_OUTPUT_BYTES,
+        });
+        if (options.json) {
+          context.output.json(result.success
+            ? { success: true, data: result }
+            : {
+                success: false,
+                error: {
+                  code: 'AGENT_SELF_TEST_FAILED',
+                  message: 'One or more local agent tool diagnostics failed',
+                },
+                data: result,
+              });
+        } else if (result.success) {
+          context.output.success('Agent local tool self-test passed');
+          context.output.list(result.checks.map((check) => `${check.name}: ${check.detail || 'ok'}`), { bullet: '✓' });
+        } else {
+          context.output.error('Agent local tool self-test failed');
+          context.output.list(result.checks.map((check) => `${check.name}: ${check.ok ? check.detail || 'ok' : check.error || 'failed'}`), { bullet: '-' });
+        }
+        process.exitCode = result.success ? 0 : 1;
+        return;
+      }
       process.chdir(cwd);
       const auditLogPath = options.auditLog === false
         ? undefined
@@ -116,6 +148,156 @@ function resolveAgentCwd(value: string | undefined): string {
     throw new Error(`Agent cwd is not a directory: ${cwd}`);
   }
   return cwd;
+}
+
+export interface AgentSelfTestCheck {
+  name: string;
+  ok: boolean;
+  detail?: string;
+  error?: string;
+}
+
+export interface AgentSelfTestResult {
+  success: boolean;
+  root: string;
+  testDir: string;
+  checks: AgentSelfTestCheck[];
+}
+
+export async function runAgentSelfTest(options: {
+  cwd?: string;
+  allowOutsideCwd?: boolean;
+  commandTimeoutMs?: number;
+  maxOutputBytes?: number;
+} = {}): Promise<AgentSelfTestResult> {
+  const root = resolveAgentCwd(options.cwd);
+  const testRelDir = path.join('.kablewy', 'agent-self-test', `${Date.now()}-${randomUUID().slice(0, 8)}`);
+  const testDir = path.join(root, testRelDir);
+  const notePath = path.join(testRelDir, 'notes', 'probe.txt');
+  const safety: AgentSafetyConfig = {
+    cwd: root,
+    allowDangerousShell: false,
+    allowOutsideCwd: options.allowOutsideCwd === true,
+    requireShellApproval: true,
+    commandTimeoutMs: options.commandTimeoutMs ?? DEFAULT_AGENT_COMMAND_TIMEOUT_MS,
+    maxOutputBytes: options.maxOutputBytes ?? DEFAULT_AGENT_MAX_OUTPUT_BYTES,
+  };
+  const checks: AgentSelfTestCheck[] = [];
+
+  const runCheck = async (
+    name: string,
+    toolCall: Record<string, any>,
+    verify?: (payload: any) => Promise<string | boolean> | string | boolean
+  ): Promise<void> => {
+    const result = await executeLocalAgentToolCall(toolCall, safety);
+    const payload = JSON.parse(result.content);
+    if (payload.success === false) {
+      checks.push({ name, ok: false, error: payload.error?.message || 'tool returned failure' });
+      return;
+    }
+    const verified = verify ? await verify(payload) : true;
+    checks.push({
+      name,
+      ok: verified !== false,
+      detail: typeof verified === 'string' ? verified : undefined,
+      error: verified === false ? 'verification failed' : undefined,
+    });
+  };
+
+  const runBlockedCheck = async (
+    name: string,
+    toolCall: Record<string, any>,
+    expectedMessage: string
+  ): Promise<void> => {
+    const result = await executeLocalAgentToolCall(toolCall, safety);
+    const payload = JSON.parse(result.content);
+    const message = String(payload.error?.message || '');
+    checks.push({
+      name,
+      ok: payload.success === false && message.includes(expectedMessage),
+      detail: payload.success === false ? message : undefined,
+      error: payload.success === false ? undefined : 'expected tool to be blocked',
+    });
+  };
+
+  try {
+    await fsp.mkdir(testDir, { recursive: true });
+    await runCheck('write_file', {
+      id: 'selftest_write',
+      name: 'Write',
+      arguments: {
+        file_path: notePath,
+        content: 'alpha\nbeta\n',
+      },
+    }, () => notePath);
+    await runCheck('read_file', {
+      id: 'selftest_read',
+      name: 'Read',
+      arguments: { file_path: notePath, full: true },
+    }, (payload) => String(payload.data?.content || '').includes('alpha') ? 'read content matched' : false);
+    await runCheck('edit_file', {
+      id: 'selftest_edit',
+      name: 'Edit',
+      arguments: { file_path: notePath, old_string: 'beta', new_string: 'gamma' },
+    }, () => 'edited exact text');
+    await runCheck('search_files', {
+      id: 'selftest_grep',
+      name: 'Grep',
+      arguments: { path: testRelDir, pattern: 'gamma' },
+    }, (payload) => Array.isArray(payload.data?.matches) && payload.data.matches.length > 0 ? 'found edited text' : false);
+    await runCheck('list_files', {
+      id: 'selftest_ls',
+      name: 'LS',
+      arguments: { path: testRelDir },
+    }, (payload) => Array.isArray(payload.data?.entries) && payload.data.entries.some((entry: any) => entry.path.endsWith('notes')) ? 'listed test directory' : false);
+    await runCheck('shell_pwd', {
+      id: 'selftest_pwd',
+      name: 'Bash',
+      arguments: { command: 'pwd', cwd: testRelDir },
+    }, async (payload) => {
+      const actual = String(payload.data?.stdout || '').trim();
+      const [actualReal, expectedReal] = await Promise.all([
+        fsp.realpath(actual).catch(() => path.resolve(actual)),
+        fsp.realpath(testDir).catch(() => path.resolve(testDir)),
+      ]);
+      return actualReal === expectedReal ? 'pwd matched agent cwd' : false;
+    });
+    await runCheck('shell_ls', {
+      id: 'selftest_shell_ls',
+      name: 'Bash',
+      arguments: { command: 'ls notes', cwd: testRelDir },
+    }, (payload) => String(payload.data?.stdout || '').includes('probe.txt') ? 'shell saw written file' : false);
+    await runBlockedCheck('block_outside_write', {
+      id: 'selftest_outside',
+      name: 'Write',
+      arguments: { file_path: '../kablewy-agent-self-test-outside.txt', content: 'nope' },
+    }, 'outside the agent root');
+    await runBlockedCheck('block_mutating_shell', {
+      id: 'selftest_mutating',
+      name: 'Bash',
+      arguments: { command: 'touch nope.txt', cwd: testRelDir },
+    }, 'mutating');
+    await runBlockedCheck('block_unknown_shell', {
+      id: 'selftest_unknown',
+      name: 'Bash',
+      arguments: { command: 'node --version', cwd: testRelDir },
+    }, 'unknown');
+  } catch (error: unknown) {
+    checks.push({
+      name: 'self_test_harness',
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    await fsp.rm(testDir, { recursive: true, force: true }).catch(() => undefined);
+  }
+
+  return {
+    success: checks.length > 0 && checks.every((check) => check.ok),
+    root,
+    testDir: path.relative(root, testDir) || '.',
+    checks,
+  };
 }
 
 async function handleChat(options: ChatOptions, context: CommandContext): Promise<void> {

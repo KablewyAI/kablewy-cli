@@ -5,6 +5,22 @@ All notable changes to `@kablewy/cli` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10] - 2026-06-26
+
+### Added
+
+- **Agent self-test** — Added `kablewy agent --self-test` for deterministic
+  local filesystem/shell diagnostics. The check verifies local write, read,
+  edit, search, list, read-only shell execution, and safety blocks for
+  outside-root writes plus unsafe autonomous shell commands.
+
+### Fixed
+
+- **Agent shell safety** — Autonomous `Bash`/`fs_run_shell` now blocks
+  unrecognized shell commands by default instead of treating them as read-only.
+  Users can still run arbitrary local commands through the explicit `!` shell
+  approval path.
+
 ## [0.1.9] - 2026-06-23
 
 ### Fixed
