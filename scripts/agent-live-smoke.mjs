@@ -24,6 +24,17 @@ const scenarios = [
     assert: ({ text }) => /probe\.txt/.test(text),
   },
   {
+    name: 'local-directory-overview',
+    message: 'tell me about my local directory',
+    expectedEvents: [
+      'local_tool_call: Bash',
+      'local_tool_result: Bash',
+      'local_tool_call: Inventory',
+      'local_tool_result: Inventory',
+    ],
+    assert: ({ text, probeDir }) => /probe\.txt/.test(text) || normalizePathText(text).includes(normalizePathText(probeDir)),
+  },
+  {
     name: 'write-readback',
     message: 'write a small test file named sample.txt and read it back',
     expectedEvents: [

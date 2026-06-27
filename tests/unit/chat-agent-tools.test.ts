@@ -274,6 +274,64 @@ describe('agent local tools', () => {
     }
   });
 
+  it('pre-runs local directory discovery before the model response', async () => {
+    const { dir, safety } = tempSafety();
+    mkdirSync(path.join(dir, 'src'), { recursive: true });
+    writeFileSync(path.join(dir, 'package.json'), '{"name":"probe"}\n');
+    writeFileSync(path.join(dir, 'src/index.ts'), 'export const probe = true;\n');
+    let capturedBody: any;
+    const fetchMock = vi.fn(async (_url: string, init: any) => {
+      capturedBody = JSON.parse(String(init?.body || '{}'));
+      return new Response('data: {"type":"content","content":"done"}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const toolEvents: string[] = [];
+      await streamProcessChatWithCallbacks('chat-1', 'tell me about my local directory', {
+        agent: true,
+        agentSafety: safety,
+      } as any, {
+        config: {
+          get: (key: string) => ({
+            apiUrl: 'https://api.example.com',
+            orgId: 'org-1',
+            userId: 'user-1',
+            apiKey: 'api_test_key',
+          } as Record<string, string>)[key],
+        },
+        telemetry: { command: 'agent' },
+      } as any, {
+        onText: () => undefined,
+        onToolEvent: (event) => toolEvents.push(event),
+      });
+
+      expect(toolEvents).toEqual([
+        'local_tool_call: Bash',
+        'local_tool_result: Bash',
+        'local_tool_call: Inventory',
+        'local_tool_result: Inventory',
+      ]);
+      const messages = capturedBody?.params?.arguments?.messages || [];
+      const bootstrap = messages.find((message: any) => message.role === 'system' && String(message.content).includes('Local CLI Pre-Run Result'));
+      expect(bootstrap).toBeTruthy();
+      expect(bootstrap.content).toContain('"command":"pwd"');
+      expect(bootstrap.content).toContain('package.json');
+      expect(bootstrap.content).toContain('src/index.ts');
+      expect(bootstrap.content).toContain('Inventory');
+      const userMessage = messages.find((message: any) => message.role === 'user');
+      expect(userMessage.content).toContain('Local CLI pre-run result for this request');
+      expect(userMessage.content).toContain('package.json');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+    }
+  });
+
   it('keeps local filesystem evidence fresh across truncated listing follow-ups', async () => {
     const { dir, safety } = tempSafety();
     for (let i = 0; i < 360; i++) {

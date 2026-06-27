@@ -1192,6 +1192,26 @@ function inferAgentLocalBootstrapToolCalls(message: string, state?: AgentWorkspa
     }];
   }
 
+  const asksAboutLocalDirectory = (
+    /\b(tell|describe|summarize|inspect|analy[sz]e|discover|overview|explain|what(?:'s| is)?)\b/.test(lower) &&
+    /\b(local\s+directory|working\s+directory|current\s+directory|this\s+directory|cwd|workspace|project\s+root|repo|repository|where\s+i\s+am)\b/.test(lower)
+  ) || /\btell me about (?:my|the|this|our) local directory\b/.test(lower);
+  if (asksAboutLocalDirectory) {
+    rememberWorkspacePath(state, '.');
+    return [
+      {
+        id: `${idPrefix}_pwd`,
+        name: 'Bash',
+        arguments: { command: 'pwd' },
+      },
+      {
+        id: `${idPrefix}_inventory`,
+        name: 'Inventory',
+        arguments: { path: '.', max_depth: 3, include_hidden: false, max_entries: 1000 },
+      },
+    ];
+  }
+
   if (
     /\b(recursive|recursively|inventory|inventorize|tree|entire|whole)\b/.test(lower) &&
     /\b(directory|folder|repo|repository|project|cwd|this|current|inventory|list|map)\b/.test(lower)
@@ -1238,8 +1258,8 @@ function inferAgentLocalBootstrapToolCalls(message: string, state?: AgentWorkspa
   }
 
   if (
-    /\b(list|show|display|see|what(?:'s| is)?)\b/.test(lower) &&
-    /\b(files|directory|folder|cwd|current directory|this directory)\b/.test(lower)
+    /\b(list|show|display|see|tell|describe|inspect|discover|what(?:'s| is)?)\b/.test(lower) &&
+    /\b(files|directory|folder|cwd|working directory|current directory|this directory|local directory)\b/.test(lower)
   ) {
     rememberWorkspacePath(state, '.');
     return [{
@@ -2199,6 +2219,7 @@ export async function streamProcessChatWithCallbacks(
     '- File attachments: The user can attach files using @ path. You can assume attached files are included in the hidden context even if the transcript only shows the paths.',
     '- Tools: Only call tools that are explicitly provided in this request (tool_choice=auto). Do not assume local filesystem tools unless listed. Use document tools for Kablewy documents.',
     isAgentMode ? '- File edits: You may claim an edit only after Write/Edit or fs_write_file/fs_edit_file reports success, or after the user runs a command that changes files.' : '',
+    isAgentMode ? '- Local discovery: When the user asks about the local directory, cwd, workspace, project, repo, or local files, use the Local CLI pre-run result or the local filesystem tools. Do not use Kablewy Bridge/resource tools such as search_tools or read_resource to discover the local machine.' : '',
     isAgentMode ? '- Local evidence: Truncated local listings are incomplete. They can prove returned entries exist, but they cannot prove a missing path does not exist. For follow-up path questions, rely on the fresh targeted local result in this request.' : '',
     'Guidelines:',
     '- When the user asks for a command, provide one or more exact commands in a bash code fence and optionally a 1–2 line note.',
