@@ -20,7 +20,6 @@ import {
 } from '../utils/index.js';
 import { UploadLogger, classifyError } from '../utils/index.js';
 import { recordFileFailure, recordFileSkipped, recordFileStart, recordFileSuccess } from '../utils/index.js';
-import { pipeline } from 'stream/promises';
 import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
 import { cliTelemetryHeaders } from '../core/telemetry.js';
 
@@ -492,7 +491,6 @@ async function uploadFile(
         form.append('file_hash', fileHash);
       }
 
-      const totalBytes = file.size;
       const headers: Record<string, string> = {
         ...cliTelemetryHeaders(context.telemetry?.command),
         ...form.getHeaders()

@@ -134,13 +134,11 @@ async function runHealthChecks(context: CommandContext): Promise<{ results: Heal
 
   // 2. Backend reachability (unauthenticated)
   const base = String(configData.apiUrl || '').replace(/\/+$/, '');
-  let backendUp = false;
   try {
     const res = await fetch(`${base}/v1/public/health`, {
       method: 'GET',
       headers: cliTelemetryHeaders(context.telemetry?.command)
     });
-    backendUp = res.ok;
     results.push({
       name: 'Backend',
       status: res.ok ? 'healthy' : 'unhealthy',

@@ -1,14 +1,13 @@
 import { Command } from 'commander';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { CommandContext, MCPMessage, ChatOptions } from '../types/index.js';
-import { ChatTUI } from '../ui/tui-chat.js';
 import React from 'react';
 import { InkChat, runInkChat } from '../ui/ink-chat.js';
-import os from 'os';
 import fs from 'node:fs';
 import { promises as fsp } from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import { glob as globFiles } from 'glob';
 import { CliError, exitCodeFor, writeJsonError, writeJsonSuccess } from '../core/api-client.js';
 import { isScopedApiKey, normalizeApiKey, scopedApiKeyErrorMessage } from '../core/credentials.js';
 import { cliTelemetryHeaders } from '../core/telemetry.js';
@@ -301,10 +300,10 @@ export async function runAgentSelfTest(options: {
 }
 
 async function handleChat(options: ChatOptions, context: CommandContext): Promise<void> {
-  const { output, mcpClient } = context;
+  const { output } = context;
   
   try {
-    let sessionId = options.session;
+    const sessionId = options.session;
     if (sessionId && !options.json) output.info(`Using existing chat session: ${sessionId}`);
 
     // If single message mode
@@ -418,7 +417,7 @@ function mergeToolsByName(tools: any[]): any[] {
 }
 
 async function sendSingleMessage(sessionId: string | undefined, message: string, options: ChatOptions, context: CommandContext): Promise<void> {
-  const { output, mcpClient } = context;
+  const { output } = context;
   const chatId = ensureChatId(sessionId);
   
   try {
@@ -526,7 +525,7 @@ async function sendSingleMessage(sessionId: string | undefined, message: string,
 }
 
 async function startInteractiveChat(sessionId: string | undefined, options: ChatOptions, context: CommandContext): Promise<void> {
-  const { output, input, mcpClient } = context;
+  const { output, input } = context;
   const chatId = ensureChatId(sessionId);
   
   output.section('Interactive Chat Mode');
@@ -696,7 +695,9 @@ export function getLocalFsTools(): any[] {
           path: { type: 'string', description: 'Directory path (relative to CWD if not absolute)' },
           max_depth: { type: 'number', description: 'Maximum subdirectory depth', default: 2 },
           include_hidden: { type: 'boolean', description: 'Include dotfiles', default: false },
-          glob: { type: 'string', description: 'Optional glob pattern to filter files' }
+          glob: { type: 'string', description: 'Optional glob pattern to filter files' },
+          max_entries: { type: 'number', description: 'Maximum entries returned in one result', default: 300 },
+          cursor: { type: 'string', description: 'Opaque cursor returned by a previous truncated listing' }
         }
       }
     },
@@ -724,6 +725,20 @@ export function getLocalFsTools(): any[] {
           case_insensitive: { type: 'boolean', description: 'Case-insensitive search', default: false }
         },
         required: ['pattern']
+      }
+    },
+    {
+      name: 'fs_inventory',
+      description: 'Create a structured recursive inventory of a local directory with safe default ignores, caps, and truncation metadata.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Directory path to inventory (relative to CWD if not absolute)', default: cwd },
+          max_depth: { type: 'number', description: 'Maximum subdirectory depth', default: 6 },
+          include_hidden: { type: 'boolean', description: 'Include dotfiles', default: false },
+          max_entries: { type: 'number', description: 'Maximum entries returned in one result', default: 1000 },
+          cursor: { type: 'string', description: 'Opaque cursor returned by a previous truncated inventory' }
+        }
       }
     },
     {
@@ -774,7 +789,9 @@ export function getLocalFsTools(): any[] {
         properties: {
           path: { type: 'string', description: 'Directory path (relative to CWD if not absolute)' },
           max_depth: { type: 'number', description: 'Maximum subdirectory depth', default: 2 },
-          include_hidden: { type: 'boolean', description: 'Include dotfiles', default: false }
+          include_hidden: { type: 'boolean', description: 'Include dotfiles', default: false },
+          max_entries: { type: 'number', description: 'Maximum entries returned in one result', default: 300 },
+          cursor: { type: 'string', description: 'Opaque cursor returned by a previous truncated listing' }
         }
       }
     },
@@ -802,6 +819,20 @@ export function getLocalFsTools(): any[] {
           case_insensitive: { type: 'boolean', description: 'Case-insensitive search', default: false }
         },
         required: ['pattern']
+      }
+    },
+    {
+      name: 'Inventory',
+      description: 'Create a recursive inventory of a local directory. Alias for fs_inventory.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          path: { type: 'string', description: 'Directory path to inventory (relative to CWD if not absolute)', default: cwd },
+          max_depth: { type: 'number', description: 'Maximum subdirectory depth', default: 6 },
+          include_hidden: { type: 'boolean', description: 'Include dotfiles', default: false },
+          max_entries: { type: 'number', description: 'Maximum entries returned in one result', default: 1000 },
+          cursor: { type: 'string', description: 'Opaque cursor returned by a previous truncated inventory' }
+        }
       }
     },
     {
@@ -899,12 +930,14 @@ const LOCAL_AGENT_TOOL_NAMES = new Set([
   'fs_list_files',
   'fs_read_file',
   'fs_search_files',
+  'fs_inventory',
   'fs_run_shell',
   'fs_write_file',
   'fs_edit_file',
   'LS',
   'Read',
   'Grep',
+  'Inventory',
   'Bash',
   'Write',
   'Edit',
@@ -915,6 +948,7 @@ function canonicalLocalToolName(name: string): string {
     case 'LS': return 'fs_list_files';
     case 'Read': return 'fs_read_file';
     case 'Grep': return 'fs_search_files';
+    case 'Inventory': return 'fs_inventory';
     case 'Bash': return 'fs_run_shell';
     case 'Write': return 'fs_write_file';
     case 'Edit': return 'fs_edit_file';
@@ -963,6 +997,109 @@ interface AgentLocalBootstrapToolCall {
   arguments: Record<string, any>;
 }
 
+interface AgentWorkspaceObservation {
+  path: string;
+  tool: string;
+  truncated: boolean;
+  timestamp: number;
+  entryPaths: string[];
+}
+
+export interface AgentWorkspaceState {
+  root: string;
+  recentPaths: string[];
+  lastRequestedPath?: string;
+  observations: Record<string, AgentWorkspaceObservation>;
+}
+
+export function createAgentWorkspaceState(root = process.cwd()): AgentWorkspaceState {
+  return {
+    root: path.resolve(root),
+    recentPaths: [],
+    observations: {},
+  };
+}
+
+function getAgentWorkspaceState(options: ChatOptions): AgentWorkspaceState | undefined {
+  if (!(options as any)?.agent) return undefined;
+  const safety = (options as any)?.agentSafety as AgentSafetyConfig | undefined;
+  const root = safety?.cwd || process.cwd();
+  const existing = (options as any).__agentWorkspaceState as AgentWorkspaceState | undefined;
+  if (existing) return existing;
+  const state = createAgentWorkspaceState(root);
+  (options as any).__agentWorkspaceState = state;
+  return state;
+}
+
+function normalizeWorkspacePath(root: string, value: unknown): string {
+  const raw = typeof value === 'string' && value.trim() ? value.trim() : '.';
+  const resolved = path.isAbsolute(raw) ? path.resolve(raw) : path.resolve(root, raw);
+  const relative = path.relative(root, resolved) || '.';
+  return relative.split(path.sep).join('/');
+}
+
+function rememberWorkspacePath(state: AgentWorkspaceState | undefined, value: unknown): void {
+  if (!state) return;
+  const normalized = normalizeWorkspacePath(state.root, value);
+  if (!normalized || normalized.startsWith('..')) return;
+  state.lastRequestedPath = normalized;
+  state.recentPaths = [normalized, ...state.recentPaths.filter((item) => item !== normalized)].slice(0, 20);
+}
+
+function recordWorkspaceToolResult(
+  state: AgentWorkspaceState | undefined,
+  toolCall: AgentLocalBootstrapToolCall | any,
+  result: LocalToolResultMessage
+): void {
+  if (!state) return;
+  let payload: any;
+  try {
+    payload = JSON.parse(result.content);
+  } catch {
+    return;
+  }
+  if (payload?.success === false) return;
+  const name = normalizeToolCallName(toolCall);
+  const args = normalizeLocalToolArguments(name, parseToolCallArguments(toolCall));
+  const canonicalName = canonicalLocalToolName(name);
+  const data = payload?.data || {};
+  const observedPath = data.path ?? args.path ?? args.file_path ?? '.';
+  rememberWorkspacePath(state, observedPath);
+  const entryPaths = Array.isArray(data.entries)
+    ? data.entries.map((entry: any) => String(entry.path || '')).filter(Boolean).slice(0, 200)
+    : Array.isArray(data.matches)
+      ? data.matches.map((entry: any) => String(entry.path || '')).filter(Boolean).slice(0, 200)
+      : [];
+  const normalized = normalizeWorkspacePath(state.root, observedPath);
+  state.observations[normalized] = {
+    path: normalized,
+    tool: canonicalName,
+    truncated: data.truncated === true,
+    timestamp: Date.now(),
+    entryPaths,
+  };
+  for (const entryPath of entryPaths.slice(0, 50)) {
+    rememberWorkspacePath(state, entryPath);
+  }
+}
+
+function buildAgentWorkspaceContext(state: AgentWorkspaceState | undefined): string | null {
+  if (!state) return null;
+  const truncated = Object.values(state.observations)
+    .filter((observation) => observation.truncated)
+    .map((observation) => observation.path)
+    .slice(0, 8);
+  const lines = [
+    '## Local Workspace State',
+    `Agent root: ${state.root}`,
+    state.lastRequestedPath ? `Last local path requested: ${state.lastRequestedPath}` : '',
+    state.recentPaths.length ? `Recent local paths: ${state.recentPaths.slice(0, 10).join(', ')}` : '',
+    truncated.length ? `Truncated observations: ${truncated.join(', ')}` : '',
+    'A truncated local listing is incomplete evidence: it can prove returned entries exist, but it cannot prove missing paths do not exist. For follow-up path questions, use a fresh targeted local tool result.',
+  ].filter(Boolean);
+  return lines.join('\n');
+}
+
 function stripTrailingSentencePunctuation(value: string): string {
   let trimmed = value.trim();
   while (trimmed.endsWith('.') || trimmed.endsWith('?') || trimmed.endsWith('!')) {
@@ -971,7 +1108,47 @@ function stripTrailingSentencePunctuation(value: string): string {
   return trimmed;
 }
 
-function inferAgentLocalBootstrapToolCalls(message: string): AgentLocalBootstrapToolCall[] {
+function cleanCandidatePath(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const cleaned = stripTrailingSentencePunctuation(value)
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/[),;:]+$/g, '')
+    .trim();
+  if (!cleaned || /^(this|current|the|directory|folder|file|repo|repository)$/i.test(cleaned)) return undefined;
+  return cleaned;
+}
+
+function extractTargetPathFromMessage(text: string, state?: AgentWorkspaceState): string | undefined {
+  const explicitBacktick = text.match(/`([^`\n]{1,300})`/);
+  const backtickPath = cleanCandidatePath(explicitBacktick?.[1]);
+  if (backtickPath && /[./\\]|\.[A-Za-z0-9_-]+$/.test(backtickPath)) return backtickPath;
+
+  const quoted = text.match(/["']([^"'\n]{1,300})["']/);
+  const quotedPath = cleanCandidatePath(quoted?.[1]);
+  if (quotedPath && /[./\\]|\.[A-Za-z0-9_-]+$/.test(quotedPath)) return quotedPath;
+
+  const inDirectory = text.match(/\b(?:what(?:'s|\s+is)?|list|show|display|see)\b[\s\S]{0,80}?\b(?:in|inside|under|within)\s+(?:the\s+)?([A-Za-z0-9_./\\-]+)(?:\s+(?:directory|folder|dir))?\b/i);
+  const inDirectoryPath = cleanCandidatePath(inDirectory?.[1]);
+  if (inDirectoryPath && !/^(this|current)$/i.test(inDirectoryPath)) return inDirectoryPath;
+
+  const trailingPath = text.match(/^(?:yes|yep|yeah|ok|okay|sure)?\s*([A-Za-z0-9_./\\-]+)\s*$/i);
+  const trailing = cleanCandidatePath(trailingPath?.[1]);
+  if (trailing && (trailing.includes('/') || trailing.includes('\\') || trailing.startsWith('.') || state?.recentPaths.includes(trailing))) {
+    return trailing;
+  }
+
+  const directFile = text.match(/\b(?:read|open|show|display|edit|update)\s+(?:the\s+)?(?:file\s+)?([A-Za-z0-9_./\\-]+\.[A-Za-z0-9_-]+)\b/i);
+  const directFilePath = cleanCandidatePath(directFile?.[1]);
+  if (directFilePath) return directFilePath;
+
+  if (/\b(that|this)\s+(?:directory|folder|file|path)\b/i.test(text) && state?.lastRequestedPath) {
+    return state.lastRequestedPath;
+  }
+
+  return undefined;
+}
+
+function inferAgentLocalBootstrapToolCalls(message: string, state?: AgentWorkspaceState): AgentLocalBootstrapToolCall[] {
   const text = String(message || '').trim();
   if (!text) return [];
   const lower = text.toLowerCase();
@@ -1015,6 +1192,19 @@ function inferAgentLocalBootstrapToolCalls(message: string): AgentLocalBootstrap
     }];
   }
 
+  if (
+    /\b(recursive|recursively|inventory|inventorize|tree|entire|whole)\b/.test(lower) &&
+    /\b(directory|folder|repo|repository|project|cwd|this|current|inventory|list|map)\b/.test(lower)
+  ) {
+    const targetPath = extractTargetPathFromMessage(text, state) || '.';
+    rememberWorkspacePath(state, targetPath);
+    return [{
+      id: idPrefix,
+      name: 'Inventory',
+      arguments: { path: targetPath, max_depth: 8, include_hidden: false, max_entries: 1000 },
+    }];
+  }
+
   const runCommand = text.match(/\b(?:run|execute)\s+((?:pwd|ls(?:\s+-[A-Za-z]+)?|git\s+(?:status|diff|log|show)(?:\s+[^\n.?!]*)?|rg\s+[^\n.?!]+|grep\s+[^\n.?!]+|find\s+[^\n.?!]+|cat\s+[^\n.?!]+|head\s+[^\n.?!]+|tail\s+[^\n.?!]+|wc\s+[^\n.?!]+))/i);
   if (runCommand) {
     return [{
@@ -1024,10 +1214,34 @@ function inferAgentLocalBootstrapToolCalls(message: string): AgentLocalBootstrap
     }];
   }
 
+  const targetedPath = extractTargetPathFromMessage(text, state);
+  if (targetedPath && /^(?:yes|yep|yeah|ok|okay|sure)?\s*[A-Za-z0-9_./\\-]+\s*$/i.test(text)) {
+    rememberWorkspacePath(state, targetedPath);
+    return [{
+      id: idPrefix,
+      name: 'LS',
+      arguments: { path: targetedPath, max_depth: 2, include_hidden: false },
+    }];
+  }
+
+  if (
+    targetedPath &&
+    /\b(list|show|display|see|what(?:'s| is)?|contents?|inside|directory|folder|dir)\b/i.test(text) &&
+    !/\.[A-Za-z0-9_-]+$/.test(targetedPath)
+  ) {
+    rememberWorkspacePath(state, targetedPath);
+    return [{
+      id: idPrefix,
+      name: 'LS',
+      arguments: { path: targetedPath, max_depth: 2, include_hidden: false },
+    }];
+  }
+
   if (
     /\b(list|show|display|see|what(?:'s| is)?)\b/.test(lower) &&
     /\b(files|directory|folder|cwd|current directory|this directory)\b/.test(lower)
   ) {
+    rememberWorkspacePath(state, '.');
     return [{
       id: idPrefix,
       name: 'LS',
@@ -1059,7 +1273,8 @@ async function buildAgentLocalBootstrapMessages(
   cb: { onToolEvent: (text: string) => void }
 ): Promise<Array<{ role: 'system'; content: string }>> {
   if ((options as any)?.toolsMode === 'none') return [];
-  const toolCalls = inferAgentLocalBootstrapToolCalls(message);
+  const workspaceState = getAgentWorkspaceState(options);
+  const toolCalls = inferAgentLocalBootstrapToolCalls(message, workspaceState);
   if (toolCalls.length === 0) return [];
 
   const results: string[] = [];
@@ -1067,6 +1282,7 @@ async function buildAgentLocalBootstrapMessages(
     cb.onToolEvent(`local_tool_call: ${toolCall.name}`);
     const result = await executeLocalAgentToolCall(toolCall, (options as any)?.agentSafety);
     cb.onToolEvent(`local_tool_result: ${toolCall.name}`);
+    recordWorkspaceToolResult(workspaceState, toolCall, result);
     results.push([
       `Tool: ${toolCall.name}`,
       `Arguments: ${JSON.stringify(toolCall.arguments)}`,
@@ -1080,10 +1296,47 @@ async function buildAgentLocalBootstrapMessages(
       '## Local CLI Pre-Run Result',
       'The Kablewy CLI detected obvious local filesystem/shell request(s) and executed them locally before this model response.',
       'Use this current local result when answering. Do not say local filesystem or shell access is unavailable for this request.',
+      'If a local listing is truncated, do not infer that missing paths are absent. Use the targeted result for the path named in this request.',
       '',
       results.join('\n\n'),
     ].join('\n'),
   }];
+}
+
+function nearestExistingPath(candidate: string): string | null {
+  let current = candidate;
+  while (current && current !== path.dirname(current)) {
+    if (fs.existsSync(current)) return current;
+    current = path.dirname(current);
+  }
+  return fs.existsSync(current) ? current : null;
+}
+
+function realpathOrNull(candidate: string): string | null {
+  try {
+    return fs.realpathSync.native(candidate);
+  } catch {
+    return null;
+  }
+}
+
+function toDisplayPath(rootCwd: string, candidate: string): string {
+  return (path.relative(rootCwd, candidate) || '.').split(path.sep).join('/');
+}
+
+function sha256(value: Buffer | string): string {
+  return createHash('sha256').update(value).digest('hex');
+}
+
+function isLikelyBinary(buffer: Buffer): boolean {
+  if (buffer.length === 0) return false;
+  const sample = buffer.subarray(0, Math.min(buffer.length, 8192));
+  let suspicious = 0;
+  for (const byte of sample) {
+    if (byte === 0) return true;
+    if (byte < 7 || (byte > 14 && byte < 32)) suspicious += 1;
+  }
+  return suspicious / sample.length > 0.08;
 }
 
 function resolveAgentToolPath(rootCwd: string, rawPath: unknown, allowOutsideCwd: boolean): string {
@@ -1092,6 +1345,14 @@ function resolveAgentToolPath(rootCwd: string, rawPath: unknown, allowOutsideCwd
   if (!allowOutsideCwd && !isPathInside(rootCwd, resolved)) {
     throw new Error(`Path is outside the agent root: ${value}`);
   }
+  if (!allowOutsideCwd) {
+    const rootRealpath = realpathOrNull(rootCwd) || path.resolve(rootCwd);
+    const existing = nearestExistingPath(fs.existsSync(resolved) ? resolved : path.dirname(resolved));
+    const realExisting = existing ? realpathOrNull(existing) : null;
+    if (realExisting && !isPathInside(rootRealpath, realExisting)) {
+      throw new Error(`Path resolves outside the agent root: ${value}`);
+    }
+  }
   return resolved;
 }
 
@@ -1099,25 +1360,71 @@ async function listAgentFiles(rootCwd: string, args: Record<string, any>, safety
   const start = resolveAgentToolPath(rootCwd, args.path, safety.allowOutsideCwd);
   const maxDepth = Math.max(0, Math.min(8, Number(args.max_depth ?? 2)));
   const includeHidden = args.include_hidden === true;
-  const maxEntries = Math.max(1, Math.min(1000, Number(args.max_entries ?? 300)));
+  const maxEntries = Math.max(1, Math.min(1000, Number(args.max_entries ?? args.limit ?? 300)));
+  const cursor = Math.max(0, Number.parseInt(String(args.cursor || '0'), 10) || 0);
   const entries: Array<Record<string, any>> = [];
+  let seen = 0;
+  let truncated = false;
+
+  const pushEntry = async (fullPath: string, typeHint?: string): Promise<void> => {
+    if (!safety.allowOutsideCwd && !isPathInside(rootCwd, fullPath)) return;
+    try {
+      resolveAgentToolPath(rootCwd, fullPath, safety.allowOutsideCwd);
+    } catch {
+      return;
+    }
+    const stat = await fsp.stat(fullPath).catch(() => null);
+    if (!stat) return;
+    if (seen++ < cursor) return;
+    if (entries.length >= maxEntries) {
+      truncated = true;
+      return;
+    }
+    entries.push({
+      path: toDisplayPath(rootCwd, fullPath),
+      type: typeHint || (stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other'),
+      size: stat.size ?? null,
+      modified: stat.mtime?.toISOString?.() ?? null,
+    });
+  };
+
+  const globPattern = typeof args.glob === 'string' && args.glob.trim() ? args.glob.trim() : '';
+  if (globPattern) {
+    const matches = await globFiles(globPattern, {
+      cwd: start,
+      dot: includeHidden,
+      nodir: false,
+      withFileTypes: false,
+      ignore: includeHidden ? [] : ['**/.*/**', '**/.*'],
+    } as any);
+    for (const match of matches.map(String).sort()) {
+      await pushEntry(path.resolve(start, match));
+      if (truncated) break;
+    }
+    return {
+      root: rootCwd,
+      path: toDisplayPath(rootCwd, start),
+      glob: globPattern,
+      count: entries.length,
+      count_returned: entries.length,
+      limit: maxEntries,
+      cursor: String(cursor),
+      truncated,
+      next_cursor: truncated ? String(cursor + entries.length) : null,
+      warning: truncated ? 'This listing is incomplete; absence cannot be inferred from omitted entries.' : undefined,
+      entries,
+    };
+  }
 
   const walk = async (dir: string, depth: number): Promise<void> => {
-    if (entries.length >= maxEntries) return;
-    const dirents = await fsp.readdir(dir, { withFileTypes: true });
+    if (truncated) return;
+    const dirents = (await fsp.readdir(dir, { withFileTypes: true })).sort((a, b) => a.name.localeCompare(b.name));
     for (const dirent of dirents) {
-      if (entries.length >= maxEntries) break;
+      if (truncated) break;
       if (!includeHidden && dirent.name.startsWith('.')) continue;
       const fullPath = path.join(dir, dirent.name);
       if (!safety.allowOutsideCwd && !isPathInside(rootCwd, fullPath)) continue;
-      const rel = path.relative(rootCwd, fullPath) || '.';
-      const stat = await fsp.stat(fullPath).catch(() => null);
-      entries.push({
-        path: rel,
-        type: dirent.isDirectory() ? 'directory' : dirent.isFile() ? 'file' : 'other',
-        size: stat?.size ?? null,
-        modified: stat?.mtime?.toISOString?.() ?? null,
-      });
+      await pushEntry(fullPath, dirent.isDirectory() ? 'directory' : dirent.isFile() ? 'file' : 'other');
       if (dirent.isDirectory() && depth < maxDepth) {
         await walk(fullPath, depth + 1);
       }
@@ -1128,19 +1435,19 @@ async function listAgentFiles(rootCwd: string, args: Record<string, any>, safety
   if (stat.isDirectory()) {
     await walk(start, 0);
   } else {
-    entries.push({
-      path: path.relative(rootCwd, start) || '.',
-      type: 'file',
-      size: stat.size,
-      modified: stat.mtime.toISOString(),
-    });
+    await pushEntry(start, 'file');
   }
 
   return {
     root: rootCwd,
-    path: path.relative(rootCwd, start) || '.',
+    path: toDisplayPath(rootCwd, start),
     count: entries.length,
-    truncated: entries.length >= maxEntries,
+    count_returned: entries.length,
+    limit: maxEntries,
+    cursor: String(cursor),
+    truncated,
+    next_cursor: truncated ? String(cursor + entries.length) : null,
+    warning: truncated ? 'This listing is incomplete; absence cannot be inferred from omitted entries.' : undefined,
     entries,
   };
 }
@@ -1152,21 +1459,36 @@ async function readAgentFile(rootCwd: string, args: Record<string, any>, safety:
   const bytes = Math.max(1024, Math.min(512 * 1024, Number(args.bytes ?? process.env.KABLEWY_ATTACH_BYTES ?? 65536)));
   const full = args.full === true || stat.size <= bytes * 2;
   const buffer = await fsp.readFile(filePath);
-  const rel = path.relative(rootCwd, filePath) || '.';
+  const rel = toDisplayPath(rootCwd, filePath);
+  if (isLikelyBinary(buffer)) {
+    return {
+      path: rel,
+      size: stat.size,
+      binary: true,
+      truncated: false,
+      sha256: sha256(buffer),
+      warning: 'Binary-looking file detected; content was not decoded or sent as text.',
+    };
+  }
   if (full) {
     return {
       path: rel,
       size: stat.size,
+      binary: false,
       truncated: false,
+      sha256: sha256(buffer),
       content: redactText(buffer.toString('utf8')),
     };
   }
   return {
     path: rel,
     size: stat.size,
+    binary: false,
     truncated: true,
+    sha256: sha256(buffer),
     head_bytes: bytes,
     tail_bytes: bytes,
+    warning: 'This file read is incomplete; absence cannot be inferred from omitted content.',
     head: redactText(buffer.subarray(0, bytes).toString('utf8')),
     tail: redactText(buffer.subarray(Math.max(0, buffer.length - bytes)).toString('utf8')),
   };
@@ -1185,17 +1507,24 @@ async function searchAgentFiles(rootCwd: string, args: Record<string, any>, safe
 
   const scanFile = async (filePath: string): Promise<void> => {
     if (scannedFiles >= maxFiles || matches.length >= maxMatches) return;
+    try {
+      resolveAgentToolPath(rootCwd, filePath, safety.allowOutsideCwd);
+    } catch {
+      return;
+    }
     scannedFiles += 1;
     const stat = await fsp.stat(filePath).catch(() => null);
     if (!stat?.isFile() || stat.size > 2 * 1024 * 1024) return;
-    const content = await fsp.readFile(filePath, 'utf8').catch(() => null);
+    const raw = await fsp.readFile(filePath).catch(() => null);
+    if (!raw || isLikelyBinary(raw)) return;
+    const content = raw.toString('utf8');
     if (content == null) return;
     const lines = content.split(/\r?\n/);
     for (let i = 0; i < lines.length && matches.length < maxMatches; i++) {
       const haystack = caseInsensitive ? lines[i].toLowerCase() : lines[i];
       if (haystack.includes(needle)) {
         matches.push({
-          path: path.relative(rootCwd, filePath) || '.',
+          path: toDisplayPath(rootCwd, filePath),
           line: i + 1,
           text: redactText(lines[i].slice(0, 500)),
         });
@@ -1205,6 +1534,11 @@ async function searchAgentFiles(rootCwd: string, args: Record<string, any>, safe
 
   const walk = async (target: string): Promise<void> => {
     if (scannedFiles >= maxFiles || matches.length >= maxMatches) return;
+    try {
+      resolveAgentToolPath(rootCwd, target, safety.allowOutsideCwd);
+    } catch {
+      return;
+    }
     const stat = await fsp.stat(target).catch(() => null);
     if (!stat) return;
     if (stat.isFile()) {
@@ -1223,13 +1557,241 @@ async function searchAgentFiles(rootCwd: string, args: Record<string, any>, safe
   await walk(start);
   return {
     root: rootCwd,
-    path: path.relative(rootCwd, start) || '.',
+    path: toDisplayPath(rootCwd, start),
     pattern,
     scannedFiles,
     count: matches.length,
     truncated: scannedFiles >= maxFiles || matches.length >= maxMatches,
     matches,
   };
+}
+
+const DEFAULT_INVENTORY_IGNORES = new Set([
+  '.git',
+  'node_modules',
+  'dist',
+  'build',
+  'coverage',
+  '.next',
+  '.turbo',
+  '.cache',
+  '.venv',
+  'venv',
+  '__pycache__',
+]);
+
+async function inventoryAgentFiles(rootCwd: string, args: Record<string, any>, safety: AgentSafetyConfig): Promise<Record<string, any>> {
+  const start = resolveAgentToolPath(rootCwd, args.path, safety.allowOutsideCwd);
+  const maxDepth = Math.max(0, Math.min(12, Number(args.max_depth ?? 6)));
+  const includeHidden = args.include_hidden === true;
+  const maxEntries = Math.max(1, Math.min(5000, Number(args.max_entries ?? args.limit ?? 1000)));
+  const cursor = Math.max(0, Number.parseInt(String(args.cursor || '0'), 10) || 0);
+  const entries: Array<Record<string, any>> = [];
+  const ignoredDirectories = new Set<string>();
+  let seen = 0;
+  let truncated = false;
+
+  const pushEntry = async (fullPath: string, typeHint?: string): Promise<void> => {
+    if (!safety.allowOutsideCwd && !isPathInside(rootCwd, fullPath)) return;
+    try {
+      resolveAgentToolPath(rootCwd, fullPath, safety.allowOutsideCwd);
+    } catch {
+      return;
+    }
+    const stat = await fsp.stat(fullPath).catch(() => null);
+    if (!stat) return;
+    if (seen++ < cursor) return;
+    if (entries.length >= maxEntries) {
+      truncated = true;
+      return;
+    }
+    entries.push({
+      path: toDisplayPath(rootCwd, fullPath),
+      type: typeHint || (stat.isDirectory() ? 'directory' : stat.isFile() ? 'file' : 'other'),
+      size: stat.isFile() ? stat.size : null,
+      modified: stat.mtime?.toISOString?.() ?? null,
+    });
+  };
+
+  const shouldIgnoreDirectory = (direntName: string, fullPath: string): boolean => {
+    if (!includeHidden && direntName.startsWith('.')) return true;
+    if (DEFAULT_INVENTORY_IGNORES.has(direntName)) return true;
+    const rel = toDisplayPath(rootCwd, fullPath);
+    return /\.(tgz|zip|tar|gz)$/i.test(rel);
+  };
+
+  const walk = async (dir: string, depth: number): Promise<void> => {
+    if (truncated) return;
+    const dirents = (await fsp.readdir(dir, { withFileTypes: true })).sort((a, b) => {
+      if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+      return a.name.localeCompare(b.name);
+    });
+    for (const dirent of dirents) {
+      if (truncated) break;
+      const fullPath = path.join(dir, dirent.name);
+      if (dirent.isDirectory() && shouldIgnoreDirectory(dirent.name, fullPath)) {
+        ignoredDirectories.add(toDisplayPath(rootCwd, fullPath));
+        continue;
+      }
+      if (!includeHidden && dirent.name.startsWith('.')) continue;
+      await pushEntry(fullPath, dirent.isDirectory() ? 'directory' : dirent.isFile() ? 'file' : 'other');
+      if (dirent.isDirectory() && depth < maxDepth) {
+        await walk(fullPath, depth + 1);
+      }
+    }
+  };
+
+  const stat = await fsp.stat(start);
+  if (stat.isDirectory()) {
+    await pushEntry(start, 'directory');
+    await walk(start, 0);
+  } else {
+    await pushEntry(start, 'file');
+  }
+
+  return {
+    root: rootCwd,
+    path: toDisplayPath(rootCwd, start),
+    count: entries.length,
+    count_returned: entries.length,
+    limit: maxEntries,
+    cursor: String(cursor),
+    truncated,
+    next_cursor: truncated ? String(cursor + entries.length) : null,
+    ignored_directories: Array.from(ignoredDirectories).sort(),
+    warning: truncated ? 'This inventory is incomplete; request the next cursor or narrow the path for full results.' : undefined,
+    entries,
+  };
+}
+
+function parsePortableShellWords(command: string): string[] | null {
+  if (/[|;&<>`$()]/.test(command)) return null;
+  const words: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+  let escaped = false;
+
+  for (const char of command.trim()) {
+    if (escaped) {
+      current += char;
+      escaped = false;
+      continue;
+    }
+    if (char === '\\' && quote !== "'") {
+      escaped = true;
+      continue;
+    }
+    if ((char === '"' || char === "'") && (!quote || quote === char)) {
+      quote = quote ? null : char;
+      continue;
+    }
+    if (/\s/.test(char) && !quote) {
+      if (current) {
+        words.push(current);
+        current = '';
+      }
+      continue;
+    }
+    current += char;
+  }
+
+  if (escaped || quote) return null;
+  if (current) words.push(current);
+  return words.length > 0 ? words : null;
+}
+
+function finishPortableShellResult(command: string, cwd: string, rootCwd: string, stdoutRaw: string, stderrRaw = '', maxBytes = DEFAULT_AGENT_MAX_OUTPUT_BYTES): Record<string, any> {
+  const stdout = takeOutputChunk(redactText(stdoutRaw), 0, maxBytes);
+  const stderr = takeOutputChunk(redactText(stderrRaw), 0, maxBytes);
+  return {
+    command,
+    cwd: path.relative(rootCwd, cwd) || '.',
+    exitCode: 0,
+    timedOut: false,
+    stdout: stdout.text,
+    stderr: stderr.text,
+    stdoutTruncated: stdout.truncated,
+    stderrTruncated: stderr.truncated,
+    portableShim: true,
+    classification: classifyShellCommand(command),
+  };
+}
+
+async function maybeRunPortableReadOnlyShell(rootCwd: string, cwd: string, command: string, safety: AgentSafetyConfig): Promise<Record<string, any> | null> {
+  const words = parsePortableShellWords(command);
+  if (!words) return null;
+  const executable = words[0].toLowerCase();
+  const args = words.slice(1);
+
+  if ((executable === 'pwd' || executable === 'cd') && args.length === 0) {
+    return finishPortableShellResult(command, cwd, rootCwd, `${cwd}\n`, '', safety.maxOutputBytes);
+  }
+
+  if (executable === 'ls' || executable === 'dir') {
+    const targets: string[] = [];
+    let includeHidden = false;
+    for (const arg of args) {
+      const lower = arg.toLowerCase();
+      if (arg.startsWith('-')) {
+        includeHidden ||= lower.includes('a');
+        continue;
+      }
+      if (executable === 'dir' && lower.startsWith('/')) {
+        includeHidden ||= lower.includes('a');
+        continue;
+      }
+      targets.push(arg);
+    }
+
+    const requestedTargets = targets.length > 0 ? targets : ['.'];
+    const lines: string[] = [];
+    for (const target of requestedTargets) {
+      const targetPath = resolveAgentToolPath(cwd, target, safety.allowOutsideCwd);
+      if (!safety.allowOutsideCwd && !isPathInside(rootCwd, targetPath)) {
+        throw new Error(`Path is outside the agent root: ${target}`);
+      }
+      const stat = await fsp.stat(targetPath);
+      if (requestedTargets.length > 1) lines.push(`${toDisplayPath(rootCwd, targetPath)}:`);
+      if (stat.isDirectory()) {
+        const dirents = (await fsp.readdir(targetPath, { withFileTypes: true })).sort((a, b) => {
+          if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1;
+          return a.name.localeCompare(b.name);
+        });
+        for (const dirent of dirents) {
+          if (!includeHidden && dirent.name.startsWith('.')) continue;
+          lines.push(`${dirent.name}${dirent.isDirectory() ? '/' : ''}`);
+        }
+      } else {
+        lines.push(path.basename(targetPath));
+      }
+      if (requestedTargets.length > 1) lines.push('');
+    }
+    return finishPortableShellResult(command, cwd, rootCwd, lines.join('\n') + (lines.length ? '\n' : ''), '', safety.maxOutputBytes);
+  }
+
+  if (executable === 'cat' || executable === 'type') {
+    if (args.length === 0 || args.some((arg) => arg.startsWith('-'))) return null;
+    let stdout = '';
+    let stderr = '';
+    for (const target of args) {
+      const filePath = resolveAgentToolPath(cwd, target, safety.allowOutsideCwd);
+      if (!safety.allowOutsideCwd && !isPathInside(rootCwd, filePath)) {
+        throw new Error(`Path is outside the agent root: ${target}`);
+      }
+      const stat = await fsp.stat(filePath);
+      if (!stat.isFile()) throw new Error(`Path is not a file: ${target}`);
+      const buffer = await fsp.readFile(filePath);
+      if (isLikelyBinary(buffer)) {
+        stderr += `Binary-looking file omitted: ${toDisplayPath(rootCwd, filePath)}\n`;
+        continue;
+      }
+      stdout += buffer.toString('utf8');
+      if (!stdout.endsWith('\n')) stdout += '\n';
+    }
+    return finishPortableShellResult(command, cwd, rootCwd, stdout, stderr, safety.maxOutputBytes);
+  }
+
+  return null;
 }
 
 async function runReadOnlyAgentShell(rootCwd: string, args: Record<string, any>, safety: AgentSafetyConfig): Promise<Record<string, any>> {
@@ -1244,6 +1806,8 @@ async function runReadOnlyAgentShell(rootCwd: string, args: Record<string, any>,
   }
   const cwd = resolveAgentToolPath(rootCwd, args.cwd || '.', safety.allowOutsideCwd);
   const timeoutMs = Math.max(1000, Math.min(safety.commandTimeoutMs, Number(args.timeout_ms ?? safety.commandTimeoutMs)));
+  const portableResult = await maybeRunPortableReadOnlyShell(rootCwd, cwd, command, safety);
+  if (portableResult) return portableResult;
   let stdout = '';
   let stderr = '';
   let stdoutBytes = 0;
@@ -1304,9 +1868,11 @@ async function writeAgentFile(rootCwd: string, args: Record<string, any>, safety
   await fsp.writeFile(filePath, content, 'utf8');
   const after = await fsp.stat(filePath);
   return {
-    path: path.relative(rootCwd, filePath) || '.',
+    path: toDisplayPath(rootCwd, filePath),
     created: !before,
+    overwritten: Boolean(before),
     bytes: after.size,
+    sha256: sha256(content),
   };
 }
 
@@ -1326,10 +1892,16 @@ async function editAgentFile(rootCwd: string, args: Record<string, any>, safety:
     : original.replace(oldText, newText);
   await fsp.writeFile(filePath, edited, 'utf8');
   return {
-    path: path.relative(rootCwd, filePath) || '.',
+    path: toDisplayPath(rootCwd, filePath),
     replacements: args.replace_all === true ? occurrences : 1,
     bytesBefore: Buffer.byteLength(original, 'utf8'),
     bytesAfter: Buffer.byteLength(edited, 'utf8'),
+    sha256Before: sha256(original),
+    sha256After: sha256(edited),
+    preview: {
+      old: redactText(oldText.slice(0, 500)),
+      new: redactText(newText.slice(0, 500)),
+    },
   };
 }
 
@@ -1365,11 +1937,13 @@ export async function executeLocalAgentToolCall(toolCall: any, safetyConfig?: Ag
         ? await readAgentFile(rootCwd, args, safety)
         : canonicalName === 'fs_search_files'
           ? await searchAgentFiles(rootCwd, args, safety)
-          : canonicalName === 'fs_write_file'
-            ? await writeAgentFile(rootCwd, args, safety)
-            : canonicalName === 'fs_edit_file'
-              ? await editAgentFile(rootCwd, args, safety)
-              : await runReadOnlyAgentShell(rootCwd, args, safety);
+          : canonicalName === 'fs_inventory'
+            ? await inventoryAgentFiles(rootCwd, args, safety)
+            : canonicalName === 'fs_write_file'
+              ? await writeAgentFile(rootCwd, args, safety)
+              : canonicalName === 'fs_edit_file'
+                ? await editAgentFile(rootCwd, args, safety)
+                : await runReadOnlyAgentShell(rootCwd, args, safety);
     return finish({ success: true, data: result });
   } catch (error: unknown) {
     return finish({
@@ -1503,41 +2077,11 @@ async function streamProcessChat(sessionId: string | undefined, message: string,
   return aggregated;
 }
 
-async function startTuiChat(sessionId: string | undefined, options: ChatOptions, context: CommandContext): Promise<void> {
-  const chatId = ensureChatId(sessionId);
-  const tui = new ChatTUI({
-    onSubmit: async (text: string) => {
-      try {
-        // Phase: Thinking
-        tui.setStatusPhase('Thinking');
-        await streamProcessChatWithCallbacks(chatId, text, options, context, {
-          onText: (chunk) => {
-            tui.setStatusPhase('Generating');
-            // Do not print status label on every chunk; only first entry triggers phase update
-            tui.appendAssistantChunk(chunk);
-          },
-          onToolEvent: (evt) => {
-            // Detect specific tool event names
-            const match = /tool_call: (.+)$/.exec(evt || '');
-            if (match && match[1]) {
-              tui.setStatusPhase('Tool', match[1]);
-            } else if ((evt || '').includes('tool_result')) {
-              tui.setStatusPhase('Waiting');
-            }
-            tui.appendToolEvent(evt);
-          }
-        });
-        tui.setStatusPhase('Done');
-      } catch (e: any) {
-        tui.appendToolEvent(`Error: ${e?.message || String(e)}`);
-      }
-    },
-    onExit: () => {}
-  });
-}
-
 async function startInkTuiChat(sessionId: string | undefined, options: ChatOptions, context: CommandContext): Promise<void> {
   let liveChatId: string | undefined = ensureChatId(sessionId);
+  const agentWorkspaceState = (options as any).agent
+    ? createAgentWorkspaceState(((options as any).agentSafety as AgentSafetyConfig | undefined)?.cwd || process.cwd())
+    : undefined;
 
   const ui = React.createElement(InkChat, {
     title: (options as any).agent ? 'Kablewy Agent' : 'Kablewy Chat',
@@ -1559,7 +2103,8 @@ async function startInkTuiChat(sessionId: string | undefined, options: ChatOptio
         ...(options as any),
         model: request?.model || (options as any).model || 'gpt-5.4',
         __history: histPrefix,
-        __systemArray: systemMsg
+        __systemArray: systemMsg,
+        ...(agentWorkspaceState ? { __agentWorkspaceState: agentWorkspaceState } : {})
       } as any, context, {
         onText: (chunk) => handlers.onText(chunk),
         onToolEvent: (evt) => handlers.onTool(evt),
@@ -1608,12 +2153,14 @@ async function executeLocalContinuationTools(
   cb: { onToolEvent: (text: string) => void }
 ): Promise<LocalToolResultMessage[]> {
   const safety = (options as any)?.agentSafety as AgentSafetyConfig | undefined;
+  const workspaceState = getAgentWorkspaceState(options);
   const results: LocalToolResultMessage[] = [];
   for (const toolCall of payload.tool_calls) {
     const name = normalizeToolCallName(toolCall);
     cb.onToolEvent(`local_tool_call: ${name}`);
     const result = await executeLocalAgentToolCall(toolCall, safety);
     cb.onToolEvent(`local_tool_result: ${name}`);
+    recordWorkspaceToolResult(workspaceState, toolCall, result);
     results.push(result);
   }
   return results;
@@ -1646,12 +2193,13 @@ export async function streamProcessChatWithCallbacks(
     isAgentMode ? 'You are running inside Kablewy Agent, a beta local terminal agent mode.' : 'You are running inside the Kablewy CLI Enhanced TUI.',
     'Capabilities for this terminal session:',
     isAgentMode
-      ? '- Local tools: Prefer fs_list_files, fs_read_file, fs_search_files, fs_write_file, fs_edit_file, and fs_run_shell under the current project root. Standard aliases LS, Read, Grep, Write, Edit, and Bash are also supported. fs_run_shell/Bash is restricted to read-only commands; use fs_write_file/fs_edit_file for file changes. Mutating or dangerous shell commands are blocked unless the user explicitly runs them with ! command approval.'
+      ? '- Local tools: Prefer fs_list_files, fs_read_file, fs_search_files, fs_inventory, fs_write_file, fs_edit_file, and fs_run_shell under the current project root. Standard aliases LS, Read, Grep, Inventory, Write, Edit, and Bash are also supported. Use Inventory/fs_inventory for recursive repo or directory scans. fs_run_shell/Bash is restricted to read-only commands; use fs_write_file/fs_edit_file for file changes. Mutating or dangerous shell commands are blocked unless the user explicitly runs them with ! command approval.'
       : '- Shell: The user can execute shell commands directly by prefixing with !, and may enable autorun. When you propose commands, output them in bash code fences or lines starting with "$ ". Keep them safe and reproducible. Prefer read-only commands by default. Use the project root as the working directory unless stated otherwise.',
     isAgentMode ? '- Shell UX: If a command is mutating or destructive, propose it in a bash code fence or ask the user to run it with ! so the terminal approval flow can protect the workspace.' : '',
     '- File attachments: The user can attach files using @ path. You can assume attached files are included in the hidden context even if the transcript only shows the paths.',
     '- Tools: Only call tools that are explicitly provided in this request (tool_choice=auto). Do not assume local filesystem tools unless listed. Use document tools for Kablewy documents.',
     isAgentMode ? '- File edits: You may claim an edit only after Write/Edit or fs_write_file/fs_edit_file reports success, or after the user runs a command that changes files.' : '',
+    isAgentMode ? '- Local evidence: Truncated local listings are incomplete. They can prove returned entries exist, but they cannot prove a missing path does not exist. For follow-up path questions, rely on the fresh targeted local result in this request.' : '',
     'Guidelines:',
     '- When the user asks for a command, provide one or more exact commands in a bash code fence and optionally a 1–2 line note.',
     '- For searches, prefer ripgrep (rg) with sensible flags (e.g., rg -n -S "pattern" src/). If rg is unavailable, fall back to grep -rn.',
@@ -1663,12 +2211,16 @@ export async function streamProcessChatWithCallbacks(
   const agentBootstrapMessages = isAgentMode
     ? await buildAgentLocalBootstrapMessages(message, _options, cb)
     : [];
+  const agentWorkspaceContext = isAgentMode
+    ? buildAgentWorkspaceContext(getAgentWorkspaceState(_options))
+    : null;
   const hist = ((_options as any)?.__history as Array<{ role: 'user' | 'assistant'; content: string }>) || [];
   const maxHistMsgs = Number(process.env.KABLEWY_HISTORY_MAX_MSGS || '16');
   const maxHistChars = Number(process.env.KABLEWY_HISTORY_TOTAL_CHARS || '64000');
   const histSlice = maxHistMsgs > 0 ? hist.slice(Math.max(0, hist.length - maxHistMsgs)) : [];
   const baseMessages: any[] = [];
   if (systemPrompt) baseMessages.push({ role: 'system', content: systemPrompt });
+  if (agentWorkspaceContext) baseMessages.push({ role: 'system', content: agentWorkspaceContext });
   baseMessages.push(...agentBootstrapMessages);
   const currentUserContent = agentBootstrapMessages.length > 0
     ? [
@@ -1847,38 +2399,6 @@ export async function streamProcessChatWithCallbacks(
   }
 
   throw new Error('Local tool continuation exceeded the maximum turn limit');
-}
-
-async function streamChatResponse(sessionId: string, message: string, options: ChatOptions, context: CommandContext): Promise<void> {
-  const { output, mcpClient } = context;
-  
-  try {
-    // Start streaming chat
-    const chatStream = mcpClient.startChat([{
-      role: 'user',
-      content: message,
-      toolCalls: [],
-      toolResults: []
-    }]);
-    
-    for await (const response of chatStream) {
-      if (response.content) {
-        process.stdout.write(response.content);
-      }
-      
-      if (response.toolCalls && response.toolCalls.length > 0) {
-        output.info('\n[Using tools...]');
-        for (const toolCall of response.toolCalls) {
-          output.info(`  - ${toolCall.name}`);
-        }
-      }
-    }
-    
-    process.stdout.write('\n');
-    
-  } catch (error: unknown) {
-    output.error(`Streaming failed: ${error instanceof Error ? error.message : String(error)}`);
-  }
 }
 
 async function handleChatCommand(command: string, sessionId: string, options: ChatOptions, context: CommandContext): Promise<boolean> {

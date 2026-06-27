@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -34,12 +34,14 @@ describe('agent local tools', () => {
       'fs_list_files',
       'fs_read_file',
       'fs_search_files',
+      'fs_inventory',
       'fs_run_shell',
       'fs_write_file',
       'fs_edit_file',
       'LS',
       'Read',
       'Grep',
+      'Inventory',
       'Bash',
       'Write',
       'Edit',
@@ -210,10 +212,10 @@ describe('agent local tools', () => {
       const bootstrap = messages.find((message: any) => message.role === 'system' && String(message.content).includes('Local CLI Pre-Run Result'));
       expect(bootstrap).toBeTruthy();
       expect(bootstrap.content).toContain('"command":"pwd"');
-      expect(bootstrap.content).toContain(realpathSync(dir));
+      expect(bootstrap.content).toContain(path.basename(dir));
       const userMessage = messages.find((message: any) => message.role === 'user');
       expect(userMessage.content).toContain('Local CLI pre-run result for this request');
-      expect(userMessage.content).toContain(realpathSync(dir));
+      expect(userMessage.content).toContain(path.basename(dir));
       expect(fetchMock).toHaveBeenCalledTimes(1);
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -266,6 +268,80 @@ describe('agent local tools', () => {
       expect(userMessage.content).toContain('Local CLI pre-run result for this request');
       expect(userMessage.content).toContain('alpha.txt');
       expect(fetchMock).toHaveBeenCalledTimes(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('keeps local filesystem evidence fresh across truncated listing follow-ups', async () => {
+    const { dir, safety } = tempSafety();
+    for (let i = 0; i < 360; i++) {
+      writeFileSync(path.join(dir, `a${String(i).padStart(3, '0')}.txt`), `file ${i}\n`);
+    }
+    mkdirSync(path.join(dir, 'src'), { recursive: true });
+    writeFileSync(path.join(dir, 'src', 'index.ts'), 'export const index = true;\n');
+    writeFileSync(path.join(dir, 'src', 'agent.ts'), 'export const agent = true;\n');
+
+    const capturedBodies: any[] = [];
+    const fetchMock = vi.fn(async (_url: string, init: any) => {
+      capturedBodies.push(JSON.parse(String(init?.body || '{}')));
+      return new Response('data: {"type":"content","content":"ok"}\n\ndata: [DONE]\n\n', {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const context = {
+      config: {
+        get: (key: string) => ({
+          apiUrl: 'https://api.example.com',
+          orgId: 'org-1',
+          userId: 'user-1',
+          apiKey: 'api_test_key',
+        } as Record<string, string>)[key],
+      },
+      telemetry: { command: 'agent' },
+    } as any;
+    const agentOptions = {
+      agent: true,
+      agentSafety: safety,
+    } as any;
+    const toolEvents: string[] = [];
+
+    const send = async (message: string) => {
+      await streamProcessChatWithCallbacks(`chat-${Date.now()}`, message, agentOptions, context, {
+        onText: () => undefined,
+        onToolEvent: (event) => toolEvents.push(event),
+      });
+    };
+
+    const bootstrapForRequest = (index: number) => {
+      const messages = capturedBodies[index]?.params?.arguments?.messages || [];
+      return messages.find((message: any) => message.role === 'system' && String(message.content).includes('Local CLI Pre-Run Result'))?.content || '';
+    };
+
+    try {
+      await send('list the files in this directory');
+      await send('what is in the src directory?');
+      await send('yes ./src');
+      await send('just recursively inventory this whole directory.');
+
+      expect(fetchMock).toHaveBeenCalledTimes(4);
+      expect(bootstrapForRequest(0)).toContain('"path":"."');
+      expect(bootstrapForRequest(0)).toContain('"truncated":true');
+      expect(bootstrapForRequest(1)).toContain('"path":"src"');
+      expect(bootstrapForRequest(1)).toContain('src/index.ts');
+      expect(bootstrapForRequest(2)).toContain('"path":"src"');
+      expect(bootstrapForRequest(3)).toContain('Inventory');
+      expect(bootstrapForRequest(3)).toContain('src/agent.ts');
+      expect(toolEvents).toEqual(expect.arrayContaining([
+        'local_tool_call: LS',
+        'local_tool_result: LS',
+        'local_tool_call: Inventory',
+        'local_tool_result: Inventory',
+      ]));
     } finally {
       rmSync(dir, { recursive: true, force: true });
       vi.unstubAllGlobals();
@@ -362,10 +438,19 @@ describe('agent local tools', () => {
       const lsResult = await executeLocalAgentToolCall({
         id: 'call_ls',
         name: 'LS',
-        arguments: { path: '.' },
+        arguments: { path: '.', glob: '**/*.txt' },
       }, safety);
       expect(JSON.parse(lsResult.content).data.entries).toEqual(expect.arrayContaining([
-        expect.objectContaining({ path: 'notes', type: 'directory' }),
+        expect.objectContaining({ path: 'notes/todo.txt', type: 'file' }),
+      ]));
+
+      const inventoryResult = await executeLocalAgentToolCall({
+        id: 'call_inventory',
+        name: 'Inventory',
+        arguments: { path: '.', max_depth: 4 },
+      }, safety);
+      expect(JSON.parse(inventoryResult.content).data.entries).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: 'notes/todo.txt', type: 'file' }),
       ]));
 
       const bashResult = await executeLocalAgentToolCall({
@@ -373,9 +458,98 @@ describe('agent local tools', () => {
         name: 'Bash',
         arguments: { command: 'ls notes' },
       }, safety);
-      expect(JSON.parse(bashResult.content).data.stdout).toContain('todo.txt');
+      const bashPayload = JSON.parse(bashResult.content);
+      expect(bashPayload.data.stdout).toContain('todo.txt');
+      expect(bashPayload.data.portableShim).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('shims common read-only shell commands portably across host shells', async () => {
+    const { dir, safety } = tempSafety();
+    try {
+      mkdirSync(path.join(dir, 'notes'), { recursive: true });
+      writeFileSync(path.join(dir, 'notes/todo.txt'), 'portable shell\n');
+
+      const pwdResult = await executeLocalAgentToolCall({
+        id: 'call_pwd',
+        name: 'Bash',
+        arguments: { command: 'pwd' },
+      }, safety);
+      const pwdPayload = JSON.parse(pwdResult.content);
+      expect(pwdPayload.success).toBe(true);
+      expect(realpathSync(pwdPayload.data.stdout.trim())).toBe(realpathSync(dir));
+      expect(pwdPayload.data.portableShim).toBe(true);
+
+      const dirResult = await executeLocalAgentToolCall({
+        id: 'call_dir',
+        name: 'Bash',
+        arguments: { command: 'dir notes' },
+      }, safety);
+      const dirPayload = JSON.parse(dirResult.content);
+      expect(dirPayload.success).toBe(true);
+      expect(dirPayload.data.stdout).toContain('todo.txt');
+      expect(dirPayload.data.portableShim).toBe(true);
+
+      const typeResult = await executeLocalAgentToolCall({
+        id: 'call_type',
+        name: 'Bash',
+        arguments: { command: 'type notes/todo.txt' },
+      }, safety);
+      const typePayload = JSON.parse(typeResult.content);
+      expect(typePayload.success).toBe(true);
+      expect(typePayload.data.stdout).toContain('portable shell');
+      expect(typePayload.data.portableShim).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('returns binary metadata instead of decoding binary file content', async () => {
+    const { dir, safety } = tempSafety();
+    try {
+      writeFileSync(path.join(dir, 'blob.bin'), Buffer.from([0, 1, 2, 3, 4, 255, 0, 8]));
+
+      const readResult = await executeLocalAgentToolCall({
+        id: 'call_binary',
+        name: 'Read',
+        arguments: { file_path: 'blob.bin', full: true },
+      }, safety);
+      const payload = JSON.parse(readResult.content);
+
+      expect(payload.success).toBe(true);
+      expect(payload.data.binary).toBe(true);
+      expect(payload.data.content).toBeUndefined();
+      expect(payload.data.sha256).toMatch(/^[a-f0-9]{64}$/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('blocks symlink escapes outside the agent root by default', async () => {
+    const { dir, safety } = tempSafety();
+    const outsideDir = mkdtempSync(path.join(tmpdir(), 'kablewy-agent-outside-'));
+    try {
+      writeFileSync(path.join(outsideDir, 'secret.txt'), 'outside\n');
+      try {
+        symlinkSync(path.join(outsideDir, 'secret.txt'), path.join(dir, 'linked-secret.txt'));
+      } catch {
+        return;
+      }
+
+      const readResult = await executeLocalAgentToolCall({
+        id: 'call_symlink',
+        name: 'Read',
+        arguments: { file_path: 'linked-secret.txt', full: true },
+      }, safety);
+      const payload = JSON.parse(readResult.content);
+
+      expect(payload.success).toBe(false);
+      expect(payload.error.message).toContain('outside the agent root');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
     }
   });
 

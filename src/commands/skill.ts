@@ -532,23 +532,6 @@ function inferRuntimeFromExtension(entry: string): string | undefined {
   }
 }
 
-/**
- * Find conventional entry point from skill files.
- */
-function findConventionalEntry(files: string[]): string | undefined {
-  const conventions = ['main.py', 'index.js', 'main.js', 'index.ts', 'main.ts', 'main.go'];
-  // Check root level first
-  for (const conv of conventions) {
-    if (files.includes(conv)) return conv;
-  }
-  // Check scripts/ directory
-  for (const conv of conventions) {
-    const scripted = `scripts/${conv}`;
-    if (files.includes(scripted)) return scripted;
-  }
-  return undefined;
-}
-
 // Execute skill
 async function handleSkillExecute(skillId: string, options: SkillOptions, context: CommandContext): Promise<void> {
   const { output } = context;

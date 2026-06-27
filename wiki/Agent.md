@@ -1,6 +1,6 @@
 # Agent
 
-`kablewy agent` starts the beta local terminal agent mode. It can inspect a project, read/search local files, write or edit files under the agent root, run safe read-only shell checks, use Kablewy context, and switch models from the terminal.
+`kablewy agent` starts the beta local terminal agent mode. It can inspect a project, recursively inventory directories, read/search local files, write or edit files under the agent root, run safe read-only shell checks, use Kablewy context, and switch models from the terminal.
 
 ```bash
 kablewy agent
@@ -34,11 +34,13 @@ kablewy agent --cwd ./project
 
 Local file tools are constrained to the agent root by default. Use `--allow-outside-cwd` only for trusted local sessions where the agent needs files outside that root.
 
-For obvious requests such as `pwd`, listing the current directory, reading a named file, or writing a test file and reading it back, the CLI runs the local tool first and passes the result into the model turn. This keeps common local tasks reliable even when the remote model does not choose a tool on its own.
+For direct local requests such as `pwd`, listing the current directory, checking a named subdirectory, reading a named file, recursively inventorying a project, or writing a test file and reading it back, the CLI runs the local operation first and passes the result into the model turn. This keeps common local tasks reliable even when the remote model does not choose a tool on its own. Common read-only shell requests such as `pwd`, `ls`/`dir`, and `cat`/`type` are handled portably by the CLI when possible, so basic inspection works across macOS, Linux, and Windows.
+
+Large listings are intentionally capped. A truncated listing proves returned entries exist, but it does not prove omitted paths are absent. Follow-up questions about a path, such as `what is in src?` after a truncated root listing, run a fresh targeted local check.
 
 ## Shell Boundary
 
-Autonomous shell execution is restricted to recognized read-only inspection commands such as `pwd`, `ls`, `cat`, `head`, `tail`, `wc`, `rg`, `grep`, `find`, `git status`, `git diff`, `git log`, `git show`, `npm test`, and `npm run test`.
+Autonomous shell execution is restricted to recognized read-only inspection commands such as `pwd`, `ls`, `dir`, `cat`, `type`, `head`, `tail`, `wc`, `rg`, `grep`, `find`, `git status`, `git diff`, `git log`, `git show`, `npm test`, and `npm run test`.
 
 Mutating, dangerous, or unrecognized shell commands are not run as autonomous tools. The agent should propose them through the explicit `!` shell approval path instead.
 
@@ -64,3 +66,5 @@ kablewy agent --allow-shell-without-confirmation
 ```
 
 The CLI is not a sandbox or Wasm runtime. Approved local shell commands run with the local user's normal permissions. Hosted skills and MCP execution run on Kablewy's platform; local agent tools run on the user's machine.
+
+Local tool results are not passive telemetry, but they are sent as model context when the agent needs them to answer your request. For example, if you ask the agent to read a file or inspect command output, that local result is included in the model turn.

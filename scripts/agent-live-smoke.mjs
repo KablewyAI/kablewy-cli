@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { ConfigManager } from '../dist/core/config.js';
@@ -34,6 +34,26 @@ const scenarios = [
     ],
     assert: ({ text }) => /sample\.txt/.test(text) && /Kablewy agent local write test/.test(text),
   },
+  {
+    name: 'targeted-src-list',
+    setup: async (probeDir) => {
+      await mkdir(path.join(probeDir, 'src'), { recursive: true });
+      await writeFile(path.join(probeDir, 'src', 'index.ts'), 'export const ok = true;\n', 'utf8');
+    },
+    message: 'what is in the src directory? Answer with the local filenames only.',
+    expectedEvents: ['local_tool_call: LS', 'local_tool_result: LS'],
+    assert: ({ text }) => /index\.ts/.test(text),
+  },
+  {
+    name: 'inventory',
+    setup: async (probeDir) => {
+      await mkdir(path.join(probeDir, 'src'), { recursive: true });
+      await writeFile(path.join(probeDir, 'src', 'agent.ts'), 'export const agent = true;\n', 'utf8');
+    },
+    message: 'recursively inventory this whole directory. Answer with the local paths only.',
+    expectedEvents: ['local_tool_call: Inventory', 'local_tool_result: Inventory'],
+    assert: ({ text }) => /src\/agent\.ts|src[\\/]agent\.ts/.test(text),
+  },
 ];
 
 async function main() {
@@ -64,6 +84,9 @@ async function main() {
 async function runScenario(config, scenario) {
   const probeDir = await mkdtemp(path.join(tmpdir(), 'kablewy-agent-live-smoke-'));
   await writeFile(path.join(probeDir, 'probe.txt'), 'kablewy local agent live smoke\n', 'utf8');
+  if (typeof scenario.setup === 'function') {
+    await scenario.setup(probeDir);
+  }
 
   const requestSummaries = [];
   const originalFetch = globalThis.fetch;
@@ -79,7 +102,7 @@ async function runScenario(config, scenario) {
       toolCount: toolNames.length,
       hasFsRunShell: toolNames.includes('fs_run_shell'),
       hasSearchTools: toolNames.includes('search_tools'),
-      localToolNames: toolNames.filter((name) => /^(fs_|Bash|Read|Write|Edit|Grep|LS|search_tools)/.test(name)),
+      localToolNames: toolNames.filter((name) => /^(fs_|Bash|Read|Write|Edit|Grep|LS|Inventory|search_tools)/.test(name)),
     });
     return originalFetch(url, init);
   };

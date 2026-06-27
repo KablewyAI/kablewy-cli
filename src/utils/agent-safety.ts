@@ -28,7 +28,7 @@ export interface OutputChunk {
 }
 
 const READ_ONLY_PATTERNS = [
-  /^(pwd|ls|cat|head|tail|wc|rg|grep|find|git\s+status|git\s+diff|git\s+log|git\s+show|npm\s+test|npm\s+run\s+test)\b/i,
+  /^(pwd|ls|dir|cat|type|head|tail|wc|rg|grep|find|git\s+status|git\s+diff|git\s+log|git\s+show|npm\s+test|npm\s+run\s+test)\b/i,
 ];
 
 const MUTATING_PATTERNS = [
