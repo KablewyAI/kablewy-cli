@@ -50,10 +50,11 @@
     "preflight:npm": "node scripts/preflight-npm-scope.mjs",
     "smoke:tarball": "node scripts/tarball-smoke.mjs",
     "prepack": "npm run build",
-    "prepublishOnly": "npm run build && npm run test:ci",
+    "prepublishOnly": "npm run release:verify",
     "demo": "npm run build && node dist/cli.js --help",
     "test:all": "npm run test:unit && npm run test:integration && npm run test:e2e",
-    "smoke:agent-live": "npm run build && node scripts/agent-live-smoke.mjs"
+    "smoke:agent-live": "npm run build && node scripts/agent-live-smoke.mjs",
+    "release:verify": "npm run build && npm run test:ci && npm run smoke:tarball"
   },
   "keywords": [
     "kablewy",
